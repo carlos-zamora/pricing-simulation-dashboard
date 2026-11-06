@@ -1,0 +1,7 @@
+	Orlando			Miami			Florida		
+	Utilization		Orders	Utilization		Orders	Utilization		Orders
+Month	Wkdy	Wknd	Total	Wkdy	Wknd	Total	Wkdy	Wknd	Total
+Jul	81%	80%	552,025	100%	41%	364,487	88%	65%	916,512
+Aug	76%	75%	515,080	97%	39%	332,106	84%	61%	847,187
+Sep	77%	72%	514,968	100%	40%	341,844	85%	60%	856,812
+Oct	91%	88%	617,120	100%	43%	383,162	95%	71%	1,000,282

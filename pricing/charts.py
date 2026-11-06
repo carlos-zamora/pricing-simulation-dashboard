@@ -1,0 +1,262 @@
+"""Plotly figures. Styling follows the dataviz rules: validated categorical order
+(Univ = blue always, Comp = orange always), one axis per chart (small multiples instead of
+dual axes), hairline grids, thin marks, legend whenever there are 2+ series.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from .config import SEGMENTS
+from .model import (Bridge, BreakEven, DemandVsUtil, PriceVsUtil, WhatIfGrid,
+                    WhatIfSegment, linfit, whatif_curve)
+
+# Categorical slots, fixed order (validated light/dark set).
+BLUE, ORANGE, AQUA, MAGENTA = "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4"
+INK = "#898781"                       # muted ink that reads on light and dark surfaces
+GRID = "rgba(137,135,129,0.22)"       # hairline grid
+UNIV, COMP = BLUE, ORANGE
+SEQ_BLUE = [[0, "#cde2fb"], [0.35, "#6da7ec"], [0.7, "#256abf"], [1, "#0d366b"]]
+
+
+def money(x: float, signed: bool = False) -> str:
+    sign = "+" if signed and x > 0 else ""
+    if abs(x) >= 1e6:
+        return f"{sign}{'-' if x < 0 else ''}${abs(x) / 1e6:,.2f}M"
+    if abs(x) >= 1e3:
+        return f"{sign}{'-' if x < 0 else ''}${abs(x) / 1e3:,.0f}K"
+    return f"{sign}{'-' if x < 0 else ''}${abs(x):,.0f}"
+
+
+def _style(fig: go.Figure, height: int = 330, legend: bool = True) -> go.Figure:
+    fig.update_layout(
+        height=height, margin=dict(l=8, r=8, t=70, b=8),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=INK, size=12),
+        showlegend=legend, legend=dict(orientation="h", yanchor="bottom", y=1.13, x=0, bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(font_size=12), bargap=0.45,
+    )
+    fig.update_xaxes(gridcolor=GRID, linecolor=GRID, zeroline=False, automargin=True)
+    fig.update_yaxes(gridcolor=GRID, linecolor=GRID, zeroline=False, automargin=True)
+    return fig
+
+
+def _line(x, y, name, color, **kw) -> go.Scatter:
+    return go.Scatter(x=x, y=y, name=name, mode="lines+markers",
+                      line=dict(color=color, width=2),
+                      marker=dict(size=8, color=color, line=dict(color="rgba(0,0,0,0)", width=0)),
+                      **kw)
+
+
+# --------------------------------------------------------------------------- #
+# Price vs Utilization
+# --------------------------------------------------------------------------- #
+def price_and_util_by_month(p: PriceVsUtil) -> go.Figure:
+    t = p.table
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Price ($)", "Utilization"),
+                        horizontal_spacing=0.12)
+    fig.add_trace(_line(t.index, t["univ"], "Univ", UNIV, hovertemplate="%{x}: $%{y:.0f}"), 1, 1)
+    fig.add_trace(_line(t.index, t["comp"], "Comp", COMP, hovertemplate="%{x}: $%{y:.0f}"), 1, 1)
+    fig.add_trace(_line(t.index, t["util"], "Utilization", AQUA,
+                        hovertemplate="%{x}: %{y:.0%}", showlegend=False), 1, 2)
+    fig.update_yaxes(tickprefix="$", row=1, col=1)
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=1, col=2)
+    fig.update_annotations(font=dict(size=12, color=INK))
+    return _style(fig, 300)
+
+
+def scatter_with_fit(x, y, labels, xtitle: str, ytitle: str, ytick: str = ".0%",
+                     fit_label: str | None = None, color: str = BLUE,
+                     xtick: str | None = None) -> go.Figure:
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=y, mode="markers+text", text=list(labels),
+                             textposition="top center", textfont=dict(color=INK, size=11),
+                             marker=dict(size=11, color=color, line=dict(color="rgba(255,255,255,.9)", width=2)),
+                             name="Months", showlegend=False, cliponaxis=False,
+                             hovertemplate="%{text}<br>x=%{x:,.2f}<br>y=%{y:.3f}<extra></extra>"))
+    fit = linfit(x, y)
+    if fit.slope is not None:
+        xs = np.array([x.min(), x.max()])
+        fig.add_trace(go.Scatter(x=xs, y=fit.predict(xs), mode="lines", name=fit_label or "Trend",
+                                 line=dict(color=INK, width=1.5), hoverinfo="skip", showlegend=False))
+    fig.update_xaxes(title=xtitle, tickformat=xtick)
+    fig.update_yaxes(title=ytitle, tickformat=ytick)
+    span = float(np.ptp(y)) or abs(float(y.mean())) * 0.1 or 1.0
+    fig.update_yaxes(range=[float(y.min()) - 0.15 * span, float(y.max()) + 0.25 * span])
+    return _style(fig, 300, legend=False)
+
+
+def util_vs_gap(p: PriceVsUtil) -> go.Figure:
+    t = p.table
+    return scatter_with_fit(t["gap"], t["util"], t.index, "Univ – Comp price gap ($)",
+                            "Utilization")
+
+
+# --------------------------------------------------------------------------- #
+# Demand vs Util
+# --------------------------------------------------------------------------- #
+def util_vs_demand(d: DemandVsUtil) -> go.Figure:
+    t = d.table
+    return scatter_with_fit(t["demand"], t["util"], t.index, "Demand (orders)", "Utilization",
+                            xtick=",.0f")
+
+
+def price_effect_after_demand(d: DemandVsUtil) -> go.Figure:
+    t = d.table
+    labels = [f"{m} ({g:+.0f})" for m, g in zip(t.index, t["gap"])]
+    return scatter_with_fit(t["gap"], t["residual"] * 100, labels, "Univ – Comp price gap ($)",
+                            "Utilization vs demand trend (pts)", ytick=".1f", color=ORANGE)
+
+
+def indexed_trends(d: DemandVsUtil) -> go.Figure:
+    t = d.table
+    fig = go.Figure()
+    for col, name, color in (("idx_demand", "Demand", AQUA), ("idx_univ", "Univ price", UNIV),
+                             ("idx_comp", "Comp price", ORANGE), ("idx_util", "Utilization", MAGENTA)):
+        fig.add_trace(_line(t.index, t[col], name, color, hovertemplate="%{x}: %{y:.1f}"))
+    fig.update_yaxes(title=f"Index ({t.index[0]} = 100)")
+    return _style(fig, 300)
+
+
+def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Miami orders", "Univ utilization (weekday)"),
+                        horizontal_spacing=0.12)
+    fig.add_trace(go.Bar(x=months, y=sales, name="Total sales", marker_color=BLUE,
+                         marker_line=dict(color="rgba(0,0,0,0)", width=0),
+                         hovertemplate="%{x}: %{y:,.0f}"), 1, 1)
+    fig.add_trace(go.Bar(x=months, y=unfilled, name="Unfilled orders", marker_color=ORANGE,
+                         hovertemplate="%{x}: %{y:,.0f}"), 1, 1)
+    fig.add_trace(_line(months, util, "Utilization", AQUA, showlegend=False,
+                        hovertemplate="%{x}: %{y:.0%}"), 1, 2)
+    fig.update_layout(barmode="stack")
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=1, col=2)
+    fig.update_annotations(font=dict(size=12, color=INK))
+    return _style(fig, 300)
+
+
+# --------------------------------------------------------------------------- #
+# Profit
+# --------------------------------------------------------------------------- #
+def price_and_profit(df: pd.DataFrame) -> go.Figure:
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Univ price ($)", "Pre-tax profit"),
+                        horizontal_spacing=0.12)
+    fig.add_trace(_line(df.index, df["Weekday price"], "Weekday", BLUE,
+                        hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
+    fig.add_trace(_line(df.index, df["Weekend price"], "Weekend", AQUA,
+                        hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
+    fig.add_trace(go.Bar(x=df.index, y=df["Pre-tax profit"], marker_color=BLUE, showlegend=False,
+                         customdata=[money(v) for v in df["Pre-tax profit"]],
+                         hovertemplate="%{x}: %{customdata}<extra></extra>"), 1, 2)
+    fig.update_yaxes(tickprefix="$", row=1, col=1)
+    fig.update_yaxes(tickformat="$~s", row=1, col=2)
+    fig.update_annotations(font=dict(size=12, color=INK))
+    return _style(fig, 300)
+
+
+def bridge_chart(b: Bridge) -> go.Figure:
+    labels = [l for l, _ in b.steps]
+    values = [v for _, v in b.steps]
+    measure = ["absolute"] + ["relative"] * (len(values) - 2) + ["total"]
+    fig = go.Figure(go.Waterfall(
+        x=labels, y=values, measure=measure,
+        text=[money(v, signed=0 < i < len(values) - 1) for i, v in enumerate(values)],
+        textposition="outside", textfont=dict(color=INK),
+        increasing=dict(marker=dict(color=BLUE)), decreasing=dict(marker=dict(color=ORANGE)),
+        totals=dict(marker=dict(color=INK)),
+        connector=dict(line=dict(color=GRID, width=1)),
+        hovertemplate="%{x}: %{text}<extra></extra>"))
+    fig.update_yaxes(tickformat="$~s")
+    return _style(fig, 340, legend=False)
+
+
+def whatif_lines(segs: dict[tuple[str, str], WhatIfSegment]) -> go.Figure:
+    fig = make_subplots(rows=2, cols=2, subplot_titles=[s.name for s in segs.values()],
+                        vertical_spacing=0.2, horizontal_spacing=0.1)
+    for i, seg in enumerate(segs.values()):
+        r, c = divmod(i, 2)
+        cv = whatif_curve(seg)
+        fig.add_trace(go.Scatter(
+            x=cv["price"], y=cv["delta_profit"], mode="lines+markers",
+            line=dict(color=BLUE, width=2), marker=dict(size=8, color=BLUE),
+            showlegend=False,
+            customdata=np.c_[cv["utilization"], cv["rentals"]],
+            hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
+                          "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}<extra></extra>"),
+            r + 1, c + 1)
+        fig.add_trace(go.Scatter(x=[seg.price0], y=[0], mode="markers",
+                                 marker=dict(size=12, color=ORANGE, line=dict(color="white", width=2)),
+                                 name="Actual", showlegend=(i == 0), hoverinfo="skip"), r + 1, c + 1)
+        fig.add_hline(y=0, line=dict(color=INK, width=1), row=r + 1, col=c + 1)
+    fig.update_yaxes(tickformat="$~s", title_text="Δ profit vs actual")
+    fig.update_xaxes(tickprefix="$")
+    fig.update_annotations(font=dict(size=12, color=INK))
+    return _style(fig, 560)
+
+
+def whatif_heatmap(g: WhatIfGrid) -> go.Figure:
+    z = g.profit.values
+    fig = go.Figure(go.Heatmap(
+        z=z, x=[f"${p:.0f}" for p in g.weekend_prices], y=[f"${p:.0f}" for p in g.weekday_prices],
+        colorscale=SEQ_BLUE, text=[[money(v) for v in row] for row in z],
+        texttemplate="%{text}", textfont=dict(size=10), xgap=2, ygap=2,
+        colorbar=dict(title="Profit", tickformat="$~s"),
+        hovertemplate="Weekday %{y} · Weekend %{x}<br>%{text}<extra></extra>"))
+    # Mark the actual and the best cells with outlines.
+    def cell(wd, we, color, name):
+        i, j = g.weekday_prices.index(wd), g.weekend_prices.index(we)
+        fig.add_shape(type="rect", x0=j - .5, x1=j + .5, y0=i - .5, y1=i + .5,
+                      line=dict(color=color, width=3))
+        fig.add_annotation(x=j, y=i - 0.36, text=name, showarrow=False,
+                           font=dict(size=9, color=color), bgcolor="rgba(255,255,255,.75)")
+    mid = g.deltas.index(0)
+    cell(g.weekday_prices[mid], g.weekend_prices[mid], ORANGE, "actual")
+    if (g.best_weekday, g.best_weekend) != (g.weekday_prices[mid], g.weekend_prices[mid]):
+        cell(g.best_weekday, g.best_weekend, "#0b0b0b", "best")
+    fig.update_xaxes(title="Weekend price", type="category")
+    fig.update_yaxes(title="Weekday price", type="category", autorange="reversed")
+    return _style(fig, 420, legend=False)
+
+
+def break_even_chart(be: BreakEven) -> go.Figure:
+    curve = be.curve(np.linspace(0.4, 1.0, 25))
+    fig = go.Figure()
+    for color, label in zip((BLUE, ORANGE), curve.columns):
+        fig.add_trace(go.Scatter(x=curve.index, y=curve[label], mode="lines", name=label,
+                                 line=dict(color=color, width=2),
+                                 hovertemplate="Util %{x:.0%}: %{y:$,.0f}<extra>" + label + "</extra>"))
+        x0 = be.break_even[label]
+        fig.add_trace(go.Scatter(x=[x0], y=[0], mode="markers", showlegend=False,
+                                 marker=dict(size=10, color=color, line=dict(color="white", width=2)),
+                                 hovertemplate=f"Break-even {x0:.1%}<extra>{label}</extra>"))
+    fig.add_vline(x=be.actual_util, line=dict(color=INK, width=1.5),
+                  annotation_text=f"actual {be.actual_util:.0%}", annotation_font_color=INK)
+    fig.add_hline(y=0, line=dict(color=INK, width=1))
+    fig.update_xaxes(tickformat=".0%", title="Blended utilization")
+    fig.update_yaxes(tickformat="$~s", title="Pre-tax profit")
+    return _style(fig, 330)
+
+
+def unit_economics_chart(ue: pd.DataFrame, city: str) -> go.Figure:
+    d = ue[ue["city"] == city]
+    fig = go.Figure()
+    for col, color in (("Variable cost", BLUE), ("Vehicle inventory cost", ORANGE),
+                       ("Other fixed cost", AQUA), ("Pre-tax profit", MAGENTA)):
+        fig.add_trace(go.Bar(x=d["month"], y=d[col], name=col, marker_color=color,
+                             hovertemplate="%{x}: $%{y:,.0f}<extra>" + col + "</extra>"))
+    fig.update_layout(barmode="relative")
+    fig.update_yaxes(tickprefix="$", title="Revenue per vehicle per month")
+    return _style(fig, 320)
+
+
+def contribution_chart(c: pd.DataFrame, city: str) -> go.Figure:
+    d = c[c["city"] == city]
+    fig = go.Figure()
+    for col, color in (("Weekday contribution", BLUE), ("Weekend contribution", AQUA)):
+        fig.add_trace(go.Bar(x=d["month"], y=d[col], name=col.split()[0], marker_color=color,
+                             hovertemplate="%{x}: %{y:$,.0f}<extra>" + col + "</extra>"))
+    fig.update_layout(barmode="stack")
+    fig.update_yaxes(tickformat="$~s")
+    return _style(fig, 320)

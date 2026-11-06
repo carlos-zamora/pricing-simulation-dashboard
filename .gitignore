@@ -1,0 +1,6 @@
+data/facts.csv
+data/_test_facts.csv
+__pycache__/
+.pytest_cache/
+.agents/
+.claude/

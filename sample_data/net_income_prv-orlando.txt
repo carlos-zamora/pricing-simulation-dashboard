@@ -1,0 +1,13 @@
+Month	July	August	September	October
+Revenue from Weekday Rentals	$45.00	$45.00	$45.00	$41.00
+Revenue from Weekend Rentals	$37.00	$37.00	$37.00	$34.00
+Total Revenue	$42.74	$42.73	$42.82	$39.05
+Variable Costs	$15.00	$15.00	$15.00	$15.00
+Weighted Average Gross Profit Contribution	$27.74	$27.73	$27.82	$24.05
+Weekday Contribution	$30.00	$30.00	$30.00	$26.00
+Weekend Contribution	$22.00	$22.00	$22.00	$19.00
+Vehicle Inventory Costs	$14.00	$15.00	$15.01	$12.52
+Operating Profit Contribution	$13.74	$12.73	$12.81	$11.53
+Other Fixed Costs	$9.00	$9.65	$9.65	$8.05
+Pre-Tax Profit	$4.74	$3.08	$3.16	$3.48
+Accumulated Pre-Tax Profit	$0.00	$0.00	$0.00	$0.00
