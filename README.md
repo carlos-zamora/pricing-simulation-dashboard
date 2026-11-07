@@ -32,9 +32,11 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 
 A month appears in the analysis once every required table is present.
 
-## There are no controls
+## Controls
 
-The app decides these for you, the same way every round:
+The sidebar has two selectors: **City** (Florida = Orlando + Miami, Orlando, Miami) and **Day period** (Both, Weekday, Weekend). Florida or Both shows each combination plus the combined profit. Bridge, break-even and the price suggestion are per city (both day periods). With one day period, profit is shown as that period's contribution.
+
+The app decides everything else for you, the same way every round:
 
 - **Comparison:** always the latest month against the previous one ("what changed last round").
   This drives the profit bridge and the break-even comparison line.

@@ -9,6 +9,19 @@ CITIES = ["Orlando", "Miami"]          # cities we analyse (Florida = both combi
 DAYPARTS = ["Weekday", "Weekend"]
 SEGMENTS = [(c, d) for c in CITIES for d in DAYPARTS]
 
+# Choices offered by the two selectors. "Florida" = every city, "Both" = every day period.
+FLORIDA = "Florida"
+BOTH = "Both"
+CITY_OPTIONS = [FLORIDA, *CITIES]
+DAYPART_OPTIONS = [BOTH, *DAYPARTS]
+
+
+def scope(city_sel: str | None, daypart_sel: str | None):
+    """Selector values -> (cities, dayparts, segments). Unknown or empty values mean everything."""
+    cities = [city_sel] if city_sel in CITIES else list(CITIES)
+    dayparts = [daypart_sel] if daypart_sel in DAYPARTS else list(DAYPARTS)
+    return cities, dayparts, [(c, d) for c in cities for d in dayparts]
+
 DAYPART_ALIASES = {
     "wkdy": "Weekday", "weekday": "Weekday",
     "wknd": "Weekend", "weekend": "Weekend",

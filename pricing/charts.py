@@ -156,13 +156,14 @@ def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
 # --------------------------------------------------------------------------- #
 # Profit
 # --------------------------------------------------------------------------- #
-def price_and_profit(df: pd.DataFrame) -> go.Figure:
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Univ price ($)", "Pre-tax profit"),
+def price_and_profit(df: pd.DataFrame, dayparts=("Weekday", "Weekend"),
+                     profit_label: str = "Pre-tax profit") -> go.Figure:
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Univ price ($)", profit_label),
                         horizontal_spacing=0.12)
-    fig.add_trace(_line(df.index, df["Weekday price"], "Weekday", BLUE,
-                        hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
-    fig.add_trace(_line(df.index, df["Weekend price"], "Weekend", AQUA,
-                        hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
+    colors = {"Weekday": BLUE, "Weekend": AQUA}
+    for dp in dayparts:
+        fig.add_trace(_line(df.index, df[f"{dp} price"], dp, colors[dp],
+                            hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
     fig.add_trace(go.Bar(x=df.index, y=df["Pre-tax profit"], marker_color=BLUE, showlegend=False,
                          customdata=[money(v) for v in df["Pre-tax profit"]],
                          hovertemplate="%{x}: %{customdata}<extra></extra>"), 1, 2)
@@ -170,6 +171,25 @@ def price_and_profit(df: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(tickformat="$~s", row=1, col=2)
     fig.update_annotations(font=dict(size=12, color=INK))
     return _style(fig, 300)
+
+
+def scope_profit_chart(df: pd.DataFrame, label: str) -> go.Figure:
+    """Profit by month: one stacked bar segment per city, with the Florida total marked on top."""
+    fig = go.Figure()
+    cities = [c for c in df.columns if c != "Florida"]
+    for city, color in zip(cities, (BLUE, ORANGE)):
+        fig.add_trace(go.Bar(x=df.index, y=df[city], name=city, marker_color=color,
+                             customdata=[money(v) for v in df[city]],
+                             hovertemplate="%{x}: %{customdata}<extra>" + city + "</extra>"))
+    if "Florida" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["Florida"], name="Florida total", mode="markers+text",
+            text=[money(v) for v in df["Florida"]], textposition="top center",
+            textfont=dict(color=INK, size=11), marker=dict(size=9, color=INK),
+            cliponaxis=False, hovertemplate="%{x}: %{text}<extra>Florida total</extra>"))
+    fig.update_layout(barmode="stack")
+    fig.update_yaxes(tickformat="$~s", title=label)
+    return _style(fig, 340)
 
 
 def bridge_chart(b: Bridge) -> go.Figure:
@@ -188,15 +208,18 @@ def bridge_chart(b: Bridge) -> go.Figure:
     return _style(fig, 340, legend=False)
 
 
-def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]]) -> go.Figure:
+def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]],
+                 segments: list[tuple[str, str]] | None = None) -> go.Figure:
     """Change in profit vs actual as one segment's price moves; one line per assumption."""
-    names = [s.name for s in next(iter(segs_by_case.values())).values()]
-    fig = make_subplots(rows=2, cols=2, subplot_titles=names,
+    first_case = next(iter(segs_by_case.values()))
+    keys = list(segments) if segments else list(first_case)
+    ncols = min(2, len(keys))
+    nrows = -(-len(keys) // ncols)
+    fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[first_case[k].name for k in keys],
                         vertical_spacing=0.2, horizontal_spacing=0.1)
     colors = {case: c for case, c in zip(segs_by_case, (BLUE, AQUA))}
-    for i, seg_key in enumerate(next(iter(segs_by_case.values()))):
-        r, c = divmod(i, 2)
-        first = next(iter(segs_by_case.values()))[seg_key]
+    for i, seg_key in enumerate(keys):
+        r, c = divmod(i, ncols)
         measurable = segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0
         if not measurable:
             fig.add_annotation(
@@ -217,8 +240,8 @@ def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]]) 
                 hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
                               "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}"
                               f"<extra>{CASE_LABELS[case]}</extra>"), r + 1, c + 1)
-        seg0 = next(iter(segs_by_case.values()))[seg_key]
-        fig.add_trace(go.Scatter(x=[seg0.price0], y=[0], mode="markers", name="Actual price",
+        fig.add_trace(go.Scatter(x=[first_case[seg_key].price0], y=[0], mode="markers",
+                                 name="Actual price",
                                  marker=dict(size=12, color=ORANGE, line=dict(color="white", width=2)),
                                  showlegend=(i == 0), hoverinfo="skip"), r + 1, c + 1)
         fig.add_hline(y=0, line=dict(color=INK, width=1), row=r + 1, col=c + 1)
@@ -226,16 +249,16 @@ def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]]) 
     fig.update_xaxes(tickprefix="$")
     # Panels with no curve: a fixed, tick-free frame around the single actual-price dot
     # (otherwise the axes autoscale to a tiny range and show meaningless ticks).
-    for i, seg_key in enumerate(next(iter(segs_by_case.values()))):
+    for i, seg_key in enumerate(keys):
         if segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0:
             continue
-        r, c = divmod(i, 2)
-        p0 = next(iter(segs_by_case.values()))[seg_key].price0
+        r, c = divmod(i, ncols)
+        p0 = first_case[seg_key].price0
         fig.update_yaxes(range=[-1, 1], showticklabels=False, title_text="",
                          row=r + 1, col=c + 1)
         fig.update_xaxes(range=[p0 - 3, p0 + 3], tickvals=[p0], ticktext=[f"${p0:.0f}"], row=r + 1, col=c + 1)
     fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 580)
+    return _style(fig, 330 if nrows == 1 else 580)
 
 
 def whatif_heatmap(g: WhatIfGrid) -> go.Figure:

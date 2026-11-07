@@ -30,11 +30,15 @@ pytest tests/test_price_guide.py -q    # one file while iterating
 2. **Import must stay copy/paste simple.** The user has almost no time mid-simulation. Do not add
    mandatory manual steps or screens (a day-period demand paste was already rejected as too much work).
    Any new input must come from tables the simulation already copies to the clipboard.
-3. **No controls for the analysis.** The sidebar and the base-month / focus-month / sensitivity-case
-   selectors were removed on purpose. The app compares the latest month with the previous one and
-   shows both sensitivity assumptions side by side. Don't reintroduce selectors; if something needs a
-   choice, show both outcomes instead. (The only allowed selectbox is the city picker when pasting a
-   net income table.)
+3. **Only two controls: city and day period.** They are sidebar radios (`city_sel`: Florida / Orlando / Miami,
+   `daypart_sel`: Both / Weekday / Weekend; default Florida + Both). Florida = both cities. The base-month /
+   focus-month / sensitivity-case selectors were removed on purpose: the app compares the latest month with
+   the previous one and shows both sensitivity assumptions side by side. Don't add other selectors; if
+   something needs a choice, show both outcomes instead. (The only allowed selectbox is the city picker
+   when pasting a net income table.) Everything is computed for all segments; `config.scope()` filters at
+   render time. Bridge, break-even, heatmap and price guide are city-level (both day periods), so with one
+   day period selected they show a note saying so. With one day period, profit figures are that period's
+   contribution (pre-tax profit is only reported per city): `model.scope_performance`.
 4. **Never recommend a price the data can't support.** A day period whose price sensitivity is
    unmeasurable is *held* and explained, not optimized (see "Price guide" below).
 5. **Chart conventions**
@@ -123,7 +127,7 @@ is auto-detected. Parser changes must keep all 13 files in `sample_data/` parsin
 - `test_new_month.py`: simulates importing a new month end to end.
 - `test_price_guide.py`: worst case ≤ both cases; Orlando hold at 41/34; Miami unmeasurable and
   no recommendation; agreeing cases pick the best cell.
-- `test_app_smoke.py`: Streamlit `AppTest` headless run: no sidebar, "Analysing **Oct** against **Sep**",
+- `test_app_smoke.py`: Streamlit `AppTest` headless run: sidebar has only the two radios, every city x day-period combination runs, "Analysing **Oct** against **Sep**",
   "no price recommendation" shown.
 - `test_no_prototype_dependency.py`: the guard in rule 1.
 - Tests that need a store use `data/_test_facts.csv`, never `facts.csv`.

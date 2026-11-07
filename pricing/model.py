@@ -175,6 +175,32 @@ def profit_bridge(data: SimData, city: str, base: str, compare: str) -> Bridge:
     return Bridge(city, base, compare, steps, {})
 
 
+def combine_bridges(bridges: list[Bridge], name: str = "Florida") -> Bridge:
+    """Add city bridges step by step (every step is a dollar amount, so they are additive)."""
+    first = bridges[0]
+    steps = [(label, sum(b.steps[i][1] for b in bridges)) for i, (label, _) in enumerate(first.steps)]
+    return Bridge(name, first.base, first.compare, steps, {})
+
+
+def scope_performance(data: SimData, cities: list[str],
+                      dayparts: list[str]) -> tuple[pd.DataFrame, str]:
+    """Monthly profit for each selected city, plus a Florida total when there are several.
+
+    Both day periods: pre-tax profit. One day period: that period's contribution (the
+    simulation reports pre-tax profit only for a whole city). Returns (table, measure name).
+    """
+    if len(dayparts) == len(DAYPARTS):
+        label = "Pre-tax profit"
+        cols = {c: data.net("total", c, "Pre-Tax Profit") for c in cities}
+    else:
+        label = f"{dayparts[0]} contribution"
+        cols = {c: data.net("total", c, f"{dayparts[0]} Contribution") for c in cities}
+    df = pd.DataFrame(cols)
+    if len(cities) > 1:
+        df["Florida"] = df.sum(axis=1)
+    return df, label
+
+
 # --------------------------------------------------------------------------- #
 # What-if: pre-tax profit by price (built on the focus month's prices & volumes)
 # --------------------------------------------------------------------------- #

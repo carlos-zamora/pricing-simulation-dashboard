@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from pricing import charts, insights, model
-from pricing.config import ALL_TABLES, CITIES, DAYPARTS, REQUIRED_TABLES, SEGMENTS
+from pricing.config import (ALL_TABLES, CITIES, CITY_OPTIONS, DAYPART_OPTIONS, DAYPARTS,
+                            REQUIRED_TABLES, SEGMENTS, scope)
 from pricing.data import SimData
 from pricing.parsers import ParseError, detect_kind, guess_city_from_name, parse_text, read_grid
 from pricing.store import ImportReport, Store
@@ -170,6 +171,17 @@ if incomplete:
 for note in insights.caveats(data):
     st.caption(f"ℹ️ {note}")
 
+with st.sidebar:
+    st.header("View")
+    city_sel = st.radio("City", CITY_OPTIONS, key="city_sel", help="Florida = Orlando + Miami.")
+    daypart_sel = st.radio("Day period", DAYPART_OPTIONS, key="daypart_sel")
+sel_cities, sel_dayparts, sel_segs = scope(city_sel, daypart_sel)
+multi_city = len(sel_cities) > 1
+whole_city = len(sel_dayparts) == len(DAYPARTS)
+CITY_LEVEL_NOTE = ("City-level view: it covers both day periods, because the simulation reports "
+                   "these numbers for the whole city.")
+st.caption(f"Showing: **{' + '.join(sel_cities)}** · **{' + '.join(sel_dayparts)}**")
+
 pvu = model.price_vs_util(data)
 dvu = model.demand_vs_util(data)
 segs_by_case = {c: model.whatif_segments(data, latest, c, pvu, dvu) for c in model.CASES}
@@ -187,27 +199,39 @@ tabs = st.tabs(["Overview", "Price planner", "Price vs Utilization", "Demand vs 
 # Overview
 # --------------------------------------------------------------------------- #
 with tabs[0]:
-    company = sum(data.net("total", c, "Pre-Tax Profit") for c in CITIES)
-    st.metric(f"Company pre-tax profit, {latest} (Orlando + Miami)", charts.money(company[latest]),
-              charts.money(company[latest] - company[prev], True) + f" vs {prev}")
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    perf, perf_label = model.scope_performance(data, sel_cities, sel_dayparts)
+    total_col = "Florida" if multi_city else sel_cities[0]
+    tot = perf[total_col]
+    st.metric(f"{total_col} {perf_label.lower()}, {latest}", charts.money(tot[latest]),
+              charts.money(tot[latest] - tot[prev], True) + f" vs {prev}")
+    if not whole_city:
+        st.caption("Pre-tax profit is only reported for a whole city, so with one day period "
+                   f"selected the profit figures are that period's contribution ({perf_label.lower()}).")
+    st.plotly_chart(charts.scope_profit_chart(perf, perf_label), width="stretch", key="ov_scope")
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         with col:
             st.subheader(city)
-            profit = data.net("total", city, "Pre-Tax Profit")
             m1, m2, m3 = st.columns(3)
-            m1.metric(f"{latest} pre-tax profit", charts.money(profit[latest]),
-                      charts.money(profit[latest] - profit[prev], True) + f" vs {prev}")
-            m2.metric("Weekday util", f"{data.utilization(city, 'Weekday')[latest]:.0%}")
-            m3.metric("Weekend util", f"{data.utilization(city, 'Weekend')[latest]:.0%}")
-            st.plotly_chart(charts.price_and_profit(model.price_vs_profit(data, city)),
+            m1.metric(f"{latest} {perf_label.lower()}", charts.money(perf[city][latest]),
+                      charts.money(perf[city][latest] - perf[city][prev], True) + f" vs {prev}")
+            for mcol, dp in zip((m2, m3), sel_dayparts):
+                mcol.metric(f"{dp} util", f"{data.utilization(city, dp)[latest]:.0%}")
+            pp = model.price_vs_profit(data, city)
+            pp["Pre-tax profit"] = perf[city]
+            st.plotly_chart(charts.price_and_profit(pp, sel_dayparts, perf_label),
                             width="stretch", key=f"ov_{city}")
     st.subheader("Key readouts")
-    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in CITIES))
-    lines = [insights.bridge_readout(bridges[c]) for c in CITIES]
-    lines += [insights.break_even_readout(bes[c]) for c in CITIES]
-    lines += [x for c in CITIES if (x := insights.weekend_readout(data, c, latest))]
+    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in sel_cities))
+    lines = [insights.bridge_readout(bridges[c]) for c in sel_cities]
+    if multi_city:
+        lines.insert(0, insights.bridge_readout(model.combine_bridges([bridges[c] for c in sel_cities])))
+    lines += [insights.break_even_readout(bes[c]) for c in sel_cities]
+    if "Weekend" in sel_dayparts:
+        lines += [x for c in sel_cities if (x := insights.weekend_readout(data, c, latest))]
     st.markdown(bullets(lines))
+    if not whole_city:
+        st.caption(CITY_LEVEL_NOTE + " (Bridge, break-even and the price suggestion above.)")
 
 # --------------------------------------------------------------------------- #
 # Price planner
@@ -225,7 +249,7 @@ with tabs[1]:
         "**Suggested price** = the weekday/weekend pair with the best profit in the *worse* of "
         "the two cases, so it holds up whichever assumption is right.",
     ]))
-    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in CITIES))
+    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in sel_cities))
 
     def fill_suggested() -> None:
         for city in CITIES:
@@ -235,9 +259,10 @@ with tabs[1]:
     st.divider()
     st.subheader(f"Price planner (starting from {latest} actuals)")
     st.button("Fill with suggested prices", on_click=fill_suggested)
-    prices: dict[tuple[str, str], float] = {}
-    cols = st.columns(4)
-    for col, seg in zip(cols, SEGMENTS):
+    # Segments outside the current view keep their actual price, so every projection stays whole.
+    prices: dict[tuple[str, str], float] = {seg: float(cautious_segs[seg].price0) for seg in SEGMENTS}
+    cols = st.columns(len(sel_segs))
+    for col, seg in zip(cols, sel_segs):
         s = cautious_segs[seg]
         comp = data.price(seg[0], seg[1], "Comp")[latest]
         prices[seg] = col.number_input(
@@ -245,19 +270,25 @@ with tabs[1]:
             key=f"plan_{latest}_{seg}")
         col.caption(f"actual ${s.price0:.0f} · Comp ${comp:.0f} · util {s.util0:.0%}")
     scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices) for c in model.CASES}
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+
+    def profit_metrics(container, title: str, cities: list[str]) -> None:
+        container.markdown(f"**{title}**")
+        m1, m2 = container.columns(2)
+        for mcol, case in zip((m1, m2), model.CASES):
+            profit = sum(scen[case][c]["profit"] for c in cities)
+            diff = profit - sum(scen[case][c]["actual"] for c in cities)
+            mcol.metric(f"Profit, {model.CASE_LABELS[case].lower()}", charts.money(profit),
+                        charts.money(diff, True) + f" vs {latest}",
+                        delta_color="off" if abs(diff) < 1 else "normal")
+
+    if multi_city:
+        profit_metrics(st, "Florida (Orlando + Miami)", sel_cities)
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         with col:
-            st.markdown(f"**{city}**")
-            m1, m2 = st.columns(2)
-            for mcol, case in zip((m1, m2), model.CASES):
-                r = scen[case][city]
-                diff = r["profit"] - r["actual"]
-                mcol.metric(f"Profit, {model.CASE_LABELS[case].lower()}", charts.money(r["profit"]),
-                            charts.money(diff, True) + f" vs {latest}",
-                            delta_color="off" if abs(diff) < 1 else "normal")
+            profit_metrics(st, city, [city])
             rows = []
-            for dp in DAYPARTS:
+            for dp in sel_dayparts:
                 row = {"Segment": dp}
                 for case in model.CASES:
                     d = scen[case][city]["detail"][dp]
@@ -266,7 +297,10 @@ with tabs[1]:
                     row[f"Δ profit ({lab.lower()})"] = charts.money(d["delta"], True)
                 rows.append(row)
             col.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    for seg in SEGMENTS:
+    if not whole_city:
+        st.caption("Profit totals are for the whole city; the day period not shown stays at its "
+                   f"{latest} price.")
+    for seg in sel_segs:
         if (not guides[seg[0]].measurable[seg[1]]
                 and abs(prices[seg] - cautious_segs[seg].price0) >= 0.5):
             st.warning(f"{cautious_segs[seg].name}: price sensitivity can't be measured, so this "
@@ -282,8 +316,10 @@ with tabs[1]:
         "Centre cell = current prices (orange outline). Best cell (black outline) = the "
         "suggested prices.",
     ]))
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    if not whole_city:
+        st.caption(CITY_LEVEL_NOTE)
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         with col:
             st.markdown(f"**{city}**")
             g = guides[city]
@@ -299,12 +335,12 @@ with tabs[1]:
         "Each line changes only that segment's price; the orange dot is the current price.",
         "Where the two lines are far apart, the data can't yet tell price from demand.",
     ]))
-    st.plotly_chart(charts.whatif_lines(segs_by_case), width="stretch", key="wi_lines")
+    st.plotly_chart(charts.whatif_lines(segs_by_case, sel_segs), width="stretch", key="wi_lines")
     st.markdown("**Slopes used** (util pts per +$1 of price, capped at 0):\n" + bullets(
         f"{cautious_segs[seg].name}: not measurable yet, price held"
         if cautious_segs[seg].slope_used >= 0 else
         f"{cautious_segs[seg].name}: cautious {cautious_segs[seg].slope_used:+.1f}, "
-        f"optimistic {optimistic_segs[seg].slope_used:+.1f}" for seg in SEGMENTS))
+        f"optimistic {optimistic_segs[seg].slope_used:+.1f}" for seg in sel_segs))
 
 # --------------------------------------------------------------------------- #
 # Price vs Utilization
@@ -317,7 +353,7 @@ with tabs[2]:
         "Demand moves at the same time, so check the next tab before concluding.",
     ]))
     ro = insights.price_readouts(pvu)
-    for seg in SEGMENTS:
+    for seg in sel_segs:
         p = pvu[seg]
         st.markdown(f"#### {p.name}")
         a, b = st.columns(2)
@@ -339,7 +375,7 @@ with tabs[3]:
         "**Demand** per day period = units sold + unfilled orders (assigned to the busier "
         "day period). Unit sales are rounded to thousands, so expect about ±0.5%.",
     ]))
-    for seg in SEGMENTS:
+    for seg in sel_segs:
         d = dvu[seg]
         st.markdown(f"#### {d.name}")
         a, b, c = st.columns(3)
@@ -354,10 +390,11 @@ with tabs[3]:
             f"**Demand slope:** {ds} util pts per 10K orders",
             f"**Price slope (after demand):** {ps} util pts per +$1 gap",
             *dem_readouts[seg]]))
-    st.markdown("#### Miami: sales vs unfilled orders")
-    st.plotly_chart(charts.sales_vs_unfilled(
-        data.months, data.market("Miami", "sales"), data.market("Miami", "unfilled"),
-        data.utilization("Miami", "Weekday")), width="stretch", key="miami_unfilled")
+    if "Miami" in sel_cities:
+        st.markdown("#### Miami: sales vs unfilled orders")
+        st.plotly_chart(charts.sales_vs_unfilled(
+            data.months, data.market("Miami", "sales"), data.market("Miami", "unfilled"),
+            data.utilization("Miami", "Weekday")), width="stretch", key="miami_unfilled")
 
 # --------------------------------------------------------------------------- #
 # Profit bridge
@@ -370,12 +407,17 @@ with tabs[4]:
         "**Variable cost / rental** and **fixed costs** are straight differences.",
         "**Rounding** = any remainder from rounding in the simulation's reported numbers.",
     ]))
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    if not whole_city:
+        st.caption(CITY_LEVEL_NOTE)
+    shown = {c: bridges[c] for c in sel_cities}
+    if multi_city:
+        shown = {"Florida": model.combine_bridges(list(shown.values())), **shown}
+    cols = st.columns(len(shown))
+    for col, (name, br) in zip(cols, shown.items()):
         with col:
-            st.subheader(city)
-            st.plotly_chart(charts.bridge_chart(bridges[city]), width="stretch", key=f"br_{city}")
-            st.caption(insights.bridge_readout(bridges[city]))
+            st.subheader(name)
+            st.plotly_chart(charts.bridge_chart(br), width="stretch", key=f"br_{name}")
+            st.caption(insights.bridge_readout(br))
 
 # --------------------------------------------------------------------------- #
 # Break-even & economics
@@ -386,20 +428,22 @@ with tabs[5]:
         f"**@ {latest} prices:** profit at each utilization level with the current prices.",
         f"**@ {prev} prices:** the same, using last round's contribution per rental.",
     ]))
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    if not whole_city:
+        st.caption(CITY_LEVEL_NOTE)
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         with col:
             st.markdown(f"**{city}**")
             st.plotly_chart(charts.break_even_chart(bes[city]), width="stretch", key=f"be_{city}")
             st.caption(insights.break_even_readout(bes[city]))
     st.subheader("Revenue per vehicle per month: where it goes")
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         col.markdown(f"**{city}**")
         col.plotly_chart(charts.unit_economics_chart(ue, city), width="stretch", key=f"ue_{city}")
     st.subheader("Weekday vs weekend profit contribution")
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
+    cols = st.columns(len(sel_cities))
+    for col, city in zip(cols, sel_cities):
         col.markdown(f"**{city}**")
         col.plotly_chart(charts.contribution_chart(contrib, city), width="stretch", key=f"ct_{city}")
     with st.expander("Tables"):
