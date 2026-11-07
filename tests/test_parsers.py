@@ -31,7 +31,6 @@ def test_parse_number_rejects_text():
     ("market_demand.txt", "market_demand", 36),
     ("fleet_size.txt", "fleet_size", 36),
     ("capacity_utilization.txt", "capacity_utilization", 36),
-    ("demand_by_daypart.txt", "demand_by_daypart", 36),
 ])
 def test_detect_and_count(name, kind, count):
     p = parse_text((SAMPLES / name).read_text())

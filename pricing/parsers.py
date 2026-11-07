@@ -98,7 +98,7 @@ def _levels_to_fact(kind: str, levels: list[str]) -> tuple[str, str, str, str]:
     if kind in ("price", "unit_sales"):
         city, daypart, firm = levels
         return city, daypart, firm, "price" if kind == "price" else "units"
-    if kind in ("capacity_utilization", "demand_by_daypart"):
+    if kind == "capacity_utilization":
         city, group, sub = levels
         daypart = DAYPART_ALIASES.get(sub.lower())
         if daypart is None:
@@ -134,14 +134,11 @@ def detect_kind(grid: list[list[str]]) -> str:
         return "fleet_size"
     if "Market Demand" in fields:
         return "market_demand"
-    if fields <= {"Wkdy", "Wknd", "Total"} and len(groups) >= 2:
-        if "Utilization" in groups[1]:
-            return "capacity_utilization"
-        if "Demand" in groups[1]:
-            return "demand_by_daypart"
+    if fields <= {"Wkdy", "Wknd", "Total"} and len(groups) >= 2 and "Utilization" in groups[1]:
+        return "capacity_utilization"
     raise ParseError("Could not recognise this table. Expected one of: price history, unit "
-                     "sales, market demand, fleet size, capacity utilization, demand by day "
-                     "period or a net income screen.")
+                     "sales, market demand, fleet size, capacity utilization or a net income "
+                     "screen.")
 
 
 def _month_row(grid: list[list[str]]) -> int:

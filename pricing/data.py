@@ -17,7 +17,6 @@ class SimData:
             st.facts = facts
             months = st.complete_months()
         self.months: list[str] = months
-        self.demand_estimated = False
         self._demand_cache: dict[tuple[str, str], pd.Series] = {}
 
     # -- basics ------------------------------------------------------------- #
@@ -63,32 +62,23 @@ class SimData:
         return self.series(f"net_income_{basis}", line, city)
 
     def rentals(self, city: str, daypart: str) -> pd.Series:
-        """Rentals = revenue / price, exactly as the Excel workbook derives them."""
+        """Rentals = revenue / price (inherits the simulation's rounding of revenue)."""
         line = f"Revenue from {daypart} Rentals"
         return self.net("total", city, line) / self.net("prv", city, line)
 
-    # -- demand by day period (optional paste, else estimated) ------------------ #
+    # -- demand by day period ---------------------------------------------------- #
     def demand(self, city: str, daypart: str) -> pd.Series:
-        key = (city, daypart)
-        if key in self._demand_cache:
-            return self._demand_cache[key]
-        s = self.series("demand_by_daypart", "demand", city, daypart)
-        if s.isna().any():
-            s = s.fillna(self._estimate_demand(city, daypart))   # exact where pasted
-            self.demand_estimated = True
-        self._demand_cache[key] = s
-        return s
+        """Orders demanded in a day period = units sold + unfilled orders.
 
-    def _estimate_demand(self, city: str, daypart: str) -> pd.Series:
-        """Estimate day-period demand when the simulation screen was not pasted.
-
-        demand ~= units sold in that day period + unfilled orders, where unfilled orders are
-        assigned to the day period that is at capacity (the busier one if both are).
-        Accurate to roughly +/-0.1% because unit sales are rounded to thousands.
+        The simulation reports unfilled orders for the whole city, so they are assigned to the
+        day period that is more utilised (the one that ran out of cars; if both are equally
+        full, the weekday). Unit sales are rounded to thousands, so expect roughly +/-0.5%.
         """
-        sold = (self.units(city, daypart, "Univ") + self.units(city, daypart, "Comp"))
-        unfilled = self.market(city, "unfilled").fillna(0)
-        util = {d: self.utilization(city, d) for d in DAYPARTS}
-        other = [d for d in DAYPARTS if d != daypart][0]
-        mine_full = util[daypart] >= util[other]
-        return sold + unfilled.where(mine_full, 0)
+        key = (city, daypart)
+        if key not in self._demand_cache:
+            sold = self.units(city, daypart, "Univ") + self.units(city, daypart, "Comp")
+            unfilled = self.market(city, "unfilled").fillna(0)
+            other = [d for d in DAYPARTS if d != daypart][0]
+            at_capacity = self.utilization(city, daypart) >= self.utilization(city, other)
+            self._demand_cache[key] = sold + unfilled.where(at_capacity, 0)
+        return self._demand_cache[key]

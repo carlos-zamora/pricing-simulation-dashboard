@@ -1,7 +1,8 @@
-"""The analysis, ported 1:1 from the Excel workbook (parity first).
+"""The pricing analysis: regressions, profit bridge, what-if, break-even, unit economics.
 
-Section numbers refer to the sheets in reference/Pricing_Simulation_Analysis.xlsx.
-Slopes are in *utilization points* (percentage points), like the workbook.
+Slopes are in *utilization points* (percentage points) per $1 unless stated otherwise.
+Everything takes a SimData and returns plain dataclasses/DataFrames, so it is testable
+without the UI.
 """
 from __future__ import annotations
 
@@ -16,10 +17,11 @@ from .data import SimData
 CASE_GAP_ONLY = "Gap-only (upper bound)"
 CASE_DEMAND_ADJ = "Demand-adjusted (lower bound)"
 CASES = [CASE_GAP_ONLY, CASE_DEMAND_ADJ]
+CASE_LABELS = {CASE_GAP_ONLY: "Cautious", CASE_DEMAND_ADJ: "Optimistic"}
 
 
 # --------------------------------------------------------------------------- #
-# Regression helpers (match Excel SLOPE / RSQ / TREND, incl. #DIV/0 -> None)
+# Regression helpers (ordinary least squares; None when a slope is undefined)
 # --------------------------------------------------------------------------- #
 @dataclass
 class Fit:
@@ -51,7 +53,7 @@ def linfit(x, y) -> Fit:
 
 
 # --------------------------------------------------------------------------- #
-# Sheet "Price vs Util"
+# Price vs utilization
 # --------------------------------------------------------------------------- #
 @dataclass
 class PriceVsUtil:
@@ -82,7 +84,7 @@ def price_vs_util(data: SimData) -> dict[tuple[str, str], PriceVsUtil]:
 
 
 # --------------------------------------------------------------------------- #
-# Sheet "Demand vs Util"
+# Demand vs utilization
 # --------------------------------------------------------------------------- #
 @dataclass
 class DemandVsUtil:
@@ -123,7 +125,7 @@ def demand_vs_util(data: SimData) -> dict[tuple[str, str], DemandVsUtil]:
 
 
 # --------------------------------------------------------------------------- #
-# Sheet "Profit Analysis" §1  price vs pre-tax profit
+# Price vs pre-tax profit
 # --------------------------------------------------------------------------- #
 def price_vs_profit(data: SimData, city: str) -> pd.DataFrame:
     return pd.DataFrame({
@@ -134,7 +136,7 @@ def price_vs_profit(data: SimData, city: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# §2  profit bridge  base month -> compare month
+# Profit bridge: base month -> compare month
 # --------------------------------------------------------------------------- #
 @dataclass
 class Bridge:
@@ -174,7 +176,7 @@ def profit_bridge(data: SimData, city: str, base: str, compare: str) -> Bridge:
 
 
 # --------------------------------------------------------------------------- #
-# §3  what-if: pre-tax profit by price (month-of-interest prices & volumes)
+# What-if: pre-tax profit by price (built on the focus month's prices & volumes)
 # --------------------------------------------------------------------------- #
 @dataclass
 class WhatIfSegment:
@@ -251,10 +253,83 @@ def whatif_grid(data: SimData, city: str, month: str,
     d_we = [we.respond(p)[2] for p in we_prices]
     grid = pd.DataFrame([[base_profit + a + b for b in d_we] for a in d_wd],
                         index=wd_prices, columns=we_prices)
-    flat = int(np.argmax(grid.values))            # first max, row-major, like the workbook
+    flat = int(np.argmax(grid.values))            # first max, row-major
     r, c = divmod(flat, grid.shape[1])
     return WhatIfGrid(city, list(deltas), wd_prices, we_prices, grid, base_profit,
                       wd_prices[r], we_prices[c], float(grid.values[r, c]))
+
+
+@dataclass
+class PriceGuide:
+    """Both sensitivity assumptions side by side, and the price pair that holds up under both."""
+    city: str
+    cautious: WhatIfGrid           # utilization falls fastest when price rises (gap-only slope)
+    optimistic: WhatIfGrid         # utilization falls slowest (demand-adjusted slope)
+    worst: WhatIfGrid              # cell-by-cell worse of the two; its best cell is the pick
+    measurable: dict[str, bool]    # daypart -> is there evidence that price moves utilization?
+
+    @property
+    def pick_weekday(self) -> float:
+        return self.worst.best_weekday
+
+    @property
+    def pick_weekend(self) -> float:
+        return self.worst.best_weekend
+
+    def _delta(self, grid: WhatIfGrid) -> float:
+        return float(grid.profit.loc[self.pick_weekday, self.pick_weekend]) - grid.base_profit
+
+    @property
+    def cautious_delta(self) -> float:
+        return self._delta(self.cautious)
+
+    @property
+    def optimistic_delta(self) -> float:
+        return self._delta(self.optimistic)
+
+    @property
+    def is_hold(self) -> bool:
+        """True when no price change beats the current prices in the worst case."""
+        return abs(self.worst.best_vs_actual) < 1
+
+    @property
+    def held(self) -> list[str]:
+        """Day periods whose price is held because its sensitivity can't be measured."""
+        return [dp for dp, ok in self.measurable.items() if not ok]
+
+    @property
+    def on_edge(self) -> bool:
+        w = self.worst
+        return (self.pick_weekday in (w.weekday_prices[0], w.weekday_prices[-1])
+                or self.pick_weekend in (w.weekend_prices[0], w.weekend_prices[-1]))
+
+
+def price_guide(data: SimData, city: str, month: str,
+                segs_by_case: dict[str, dict], deltas: list[int] | None = None) -> PriceGuide:
+    """Suggest the price pair with the best worst-case profit across both assumptions.
+
+    A day period only moves if the data show price matters there (cautious slope < 0). Where it
+    is unmeasurable (price gap never changed, or utilization pinned at capacity so the slope has
+    the wrong sign) both assumptions treat price as free, which would suggest unlimited
+    increases, so that price is held at its current level and its grid cells are left blank.
+    """
+    cautious = whatif_grid(data, city, month, segs_by_case[CASE_GAP_ONLY], deltas)
+    optimistic = whatif_grid(data, city, month, segs_by_case[CASE_DEMAND_ADJ], deltas)
+    n, mid = len(cautious.deltas), cautious.deltas.index(0)
+    measurable = {dp: segs_by_case[CASE_GAP_ONLY][(city, dp)].slope_used < 0 for dp in DAYPARTS}
+    rows = range(n) if measurable["Weekday"] else [mid]
+    cols = range(n) if measurable["Weekend"] else [mid]
+    allowed = np.zeros((n, n), dtype=bool)
+    allowed[np.ix_(rows, cols)] = True
+    worst_profit = np.where(allowed, np.minimum(cautious.profit.values, optimistic.profit.values),
+                            np.nan)
+    r, c = divmod(int(np.nanargmax(worst_profit)), n)
+    worst = WhatIfGrid(city, cautious.deltas, cautious.weekday_prices, cautious.weekend_prices,
+                       pd.DataFrame(worst_profit, index=cautious.profit.index,
+                                    columns=cautious.profit.columns),
+                       cautious.base_profit, cautious.weekday_prices[r],
+                       cautious.weekend_prices[c], float(worst_profit[r, c]))
+    return PriceGuide(city, cautious, optimistic, worst, measurable)
 
 
 def whatif_curve(seg: WhatIfSegment, deltas: list[int] | None = None) -> pd.DataFrame:
@@ -283,7 +358,7 @@ def scenario_profit(data: SimData, month: str, segs: dict, prices: dict) -> dict
 
 
 # --------------------------------------------------------------------------- #
-# §4  break-even utilization
+# Break-even utilization
 # --------------------------------------------------------------------------- #
 @dataclass
 class BreakEven:
@@ -321,7 +396,7 @@ def break_even(data: SimData, city: str, month: str, base: str) -> BreakEven:
 
 
 # --------------------------------------------------------------------------- #
-# §5 / §6  unit economics & weekday vs weekend contribution
+# Unit economics & weekday vs weekend contribution
 # --------------------------------------------------------------------------- #
 def unit_economics(data: SimData) -> pd.DataFrame:
     rows = []

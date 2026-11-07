@@ -4,9 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
-from pricing import model
+from pricing import charts, model
 from pricing.data import SimData
 from pricing.store import Store
 
@@ -37,18 +36,42 @@ def test_november_flows_through(tmp_path):
     assert model.break_even(data, "Orlando", "Nov", "Jul").break_even
 
 
-def test_missing_day_period_screen_falls_back_to_estimate(tmp_path):
-    store = _with_november(tmp_path)
-    nov_dd = (store.facts["table"] == "demand_by_daypart") & (store.facts["month"] == "Nov")
-    store.facts = store.facts[~nov_dd]
+def test_month_missing_unit_sales_is_not_analysed(tmp_path):
+    store = _with_november(tmp_path, drop_tables=("unit_sales",))
+    assert "Nov" in store.months() and "Nov" not in store.complete_months()
+
+
+def test_demand_is_units_plus_unfilled(tmp_path):
+    store = Store(tmp_path / "f.csv")
+    store.add_folder(ROOT / "sample_data")
     data = SimData(store.facts)
-    assert "Nov" in data.months
-    d = data.demand("Orlando", "Weekday")
-    assert not d.isna().any() and data.demand_estimated
-    # months that were pasted keep their exact values
-    assert d["Jul"] == 799878
+    # Miami Oct: weekday ran out of cars, so the 64K unfilled orders land on the weekday.
+    assert data.demand("Miami", "Weekday")["Oct"] == 600_000 + 64_000
+    assert data.demand("Miami", "Weekend")["Oct"] == 96_000
+    assert data.demand("Orlando", "Weekday")["Jul"] == 800_000
 
 
-def test_month_without_any_demand_source_is_not_analysed(tmp_path):
-    store = _with_november(tmp_path, drop_tables=("demand_by_daypart", "unit_sales"))
-    assert "Nov" not in store.complete_months()
+def test_legacy_day_period_rows_are_ignored_on_load(tmp_path):
+    store = Store(tmp_path / "f.csv")
+    store.add_folder(ROOT / "sample_data")
+    legacy = store.facts.iloc[:3].copy()
+    legacy["table"] = "demand_by_daypart"
+    pd.concat([store.facts, legacy]).to_csv(tmp_path / "f.csv", index=False)
+    assert "demand_by_daypart" not in set(Store(tmp_path / "f.csv").facts["table"])
+
+
+def test_best_fit_legend_states_slope(tmp_path):
+    store = Store(tmp_path / "f.csv")
+    store.add_folder(ROOT / "sample_data")
+    data = SimData(store.facts)
+    pvu = model.price_vs_util(data)
+    p = pvu[("Orlando", "Weekday")]
+    names = [t.name for t in charts.util_vs_gap(p).data]
+    assert any(n and "slope -3.80 util pts per +$1 gap" in n and "R² 0.90" in n and "<br>" in n
+               for n in names), names
+    # A segment whose price gap never changed still gets an honest legend entry.
+    flat = pvu[("Miami", "Weekend")]
+    assert any(n and "n/a" in n for n in [t.name for t in charts.util_vs_gap(flat).data])
+    dvu = model.demand_vs_util(data)[("Orlando", "Weekday")]
+    assert any(n and "util pts per 10K orders" in n for n in [t.name for t in charts.util_vs_demand(dvu).data])
+    assert any(n and "util pts per +$1 gap" in n for n in [t.name for t in charts.price_effect_after_demand(dvu).data])

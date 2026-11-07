@@ -1,4 +1,5 @@
 {
+ "_comment": "Values calculated by the Excel prototype (Jul-Oct sample data). The prototype is frozen and no longer maintained; these numbers are regression targets only. Do not regenerate.",
  "price_vs_util": {
   "Orlando|Weekday": [
    -3.8,
@@ -59,7 +60,7 @@
    581830
   ]
  },
- "whatif_case_in_workbook": "Gap-only (upper bound)",
+ "whatif_case_in_prototype": "Gap-only (upper bound)",
  "whatif_slopes_used": [
   -3.8,
   -6.272727272727276,

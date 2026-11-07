@@ -59,6 +59,8 @@ class Store:
             self.facts = pd.read_csv(self.path, keep_default_na=False,
                                      dtype={"daypart": str, "firm": str})
             self.facts["value"] = self.facts["value"].astype(float)
+            # Drop tables this version no longer uses (e.g. an older 'demand_by_daypart').
+            self.facts = self.facts[self.facts["table"].isin(ALL_TABLES)].reset_index(drop=True)
 
     # -- writing ----------------------------------------------------------- #
     def save(self) -> None:
@@ -142,9 +144,6 @@ class Store:
                 if sub.empty:
                     ok = False
                     break
-            # Day-period demand needs the exact screen or unit sales to estimate from.
-            has_demand = any(not fm[fm["table"] == t].empty
-                             for t in ("demand_by_daypart", "unit_sales"))
-            if ok and has_demand:
+            if ok:
                 out.append(m)
         return out

@@ -10,8 +10,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .config import SEGMENTS
-from .model import (Bridge, BreakEven, DemandVsUtil, PriceVsUtil, WhatIfGrid,
-                    WhatIfSegment, linfit, whatif_curve)
+from .model import (CASE_GAP_ONLY, CASE_LABELS, Bridge, BreakEven, DemandVsUtil, PriceVsUtil,
+                    WhatIfGrid, WhatIfSegment, linfit, whatif_curve)
 
 # Categorical slots, fixed order (validated light/dark set).
 BLUE, ORANGE, AQUA, MAGENTA = "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4"
@@ -64,35 +64,49 @@ def price_and_util_by_month(p: PriceVsUtil) -> go.Figure:
     fig.update_yaxes(tickprefix="$", row=1, col=1)
     fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=1, col=2)
     fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 300)
+    return _style(fig, 430)
 
 
 def scatter_with_fit(x, y, labels, xtitle: str, ytitle: str, ytick: str = ".0%",
-                     fit_label: str | None = None, color: str = BLUE,
-                     xtick: str | None = None) -> go.Figure:
+                     slope_scale: float = 100.0, slope_unit: str = "pts per +$1",
+                     color: str = BLUE, xtick: str | None = None) -> go.Figure:
+    """Scatter of months plus a least-squares line. The legend states the slope (converted
+    with ``slope_scale`` into ``slope_unit``) and R², one fact per line."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y, mode="markers+text", text=list(labels),
                              textposition="top center", textfont=dict(color=INK, size=11),
                              marker=dict(size=11, color=color, line=dict(color="rgba(255,255,255,.9)", width=2)),
-                             name="Months", showlegend=False, cliponaxis=False,
+                             name="Month", cliponaxis=False,
                              hovertemplate="%{text}<br>x=%{x:,.2f}<br>y=%{y:.3f}<extra></extra>"))
     fit = linfit(x, y)
     if fit.slope is not None:
+        slope = fit.slope * slope_scale
+        r2 = "n/a" if fit.r2 is None else f"{fit.r2:.2f}"
         xs = np.array([x.min(), x.max()])
-        fig.add_trace(go.Scatter(x=xs, y=fit.predict(xs), mode="lines", name=fit_label or "Trend",
-                                 line=dict(color=INK, width=1.5), hoverinfo="skip", showlegend=False))
+        fig.add_trace(go.Scatter(
+            x=xs, y=fit.predict(xs), mode="lines", line=dict(color=INK, width=2),
+            name=f"Best fit<br>slope {slope:+.2f} {slope_unit}<br>R² {r2}",
+            hovertemplate=f"Best fit: slope {slope:+.2f} {slope_unit}<extra></extra>"))
+    else:
+        # Keep the legend honest when no line can be drawn.
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", line=dict(color=INK, width=2),
+                                 name="Best fit<br>n/a (x never changed)"))
     fig.update_xaxes(title=xtitle, tickformat=xtick)
     fig.update_yaxes(title=ytitle, tickformat=ytick)
     span = float(np.ptp(y)) or abs(float(y.mean())) * 0.1 or 1.0
     fig.update_yaxes(range=[float(y.min()) - 0.15 * span, float(y.max()) + 0.25 * span])
-    return _style(fig, 300, legend=False)
+    fig = _style(fig, 430, legend=True)
+    # Legend below the plot so multi-line entries are never cut off in narrow columns.
+    fig.update_layout(margin=dict(t=20, b=8),
+                      legend=dict(orientation="v", xanchor="left", x=0, yanchor="top", y=-0.34))
+    return fig
 
 
 def util_vs_gap(p: PriceVsUtil) -> go.Figure:
     t = p.table
     return scatter_with_fit(t["gap"], t["util"], t.index, "Univ – Comp price gap ($)",
-                            "Utilization")
+                            "Utilization", slope_scale=100, slope_unit="util pts per +$1 gap")
 
 
 # --------------------------------------------------------------------------- #
@@ -101,6 +115,7 @@ def util_vs_gap(p: PriceVsUtil) -> go.Figure:
 def util_vs_demand(d: DemandVsUtil) -> go.Figure:
     t = d.table
     return scatter_with_fit(t["demand"], t["util"], t.index, "Demand (orders)", "Utilization",
+                            slope_scale=10000 * 100, slope_unit="util pts per 10K orders",
                             xtick=",.0f")
 
 
@@ -108,7 +123,8 @@ def price_effect_after_demand(d: DemandVsUtil) -> go.Figure:
     t = d.table
     labels = [f"{m} ({g:+.0f})" for m, g in zip(t.index, t["gap"])]
     return scatter_with_fit(t["gap"], t["residual"] * 100, labels, "Univ – Comp price gap ($)",
-                            "Utilization vs demand trend (pts)", ytick=".1f", color=ORANGE)
+                            "Utilization vs demand trend (pts)", ytick=".1f",
+                            slope_scale=1, slope_unit="util pts per +$1 gap", color=ORANGE)
 
 
 def indexed_trends(d: DemandVsUtil) -> go.Figure:
@@ -118,7 +134,7 @@ def indexed_trends(d: DemandVsUtil) -> go.Figure:
                              ("idx_comp", "Comp price", ORANGE), ("idx_util", "Utilization", MAGENTA)):
         fig.add_trace(_line(t.index, t[col], name, color, hovertemplate="%{x}: %{y:.1f}"))
     fig.update_yaxes(title=f"Index ({t.index[0]} = 100)")
-    return _style(fig, 300)
+    return _style(fig, 430)
 
 
 def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
@@ -172,35 +188,61 @@ def bridge_chart(b: Bridge) -> go.Figure:
     return _style(fig, 340, legend=False)
 
 
-def whatif_lines(segs: dict[tuple[str, str], WhatIfSegment]) -> go.Figure:
-    fig = make_subplots(rows=2, cols=2, subplot_titles=[s.name for s in segs.values()],
+def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]]) -> go.Figure:
+    """Change in profit vs actual as one segment's price moves; one line per assumption."""
+    names = [s.name for s in next(iter(segs_by_case.values())).values()]
+    fig = make_subplots(rows=2, cols=2, subplot_titles=names,
                         vertical_spacing=0.2, horizontal_spacing=0.1)
-    for i, seg in enumerate(segs.values()):
+    colors = {case: c for case, c in zip(segs_by_case, (BLUE, AQUA))}
+    for i, seg_key in enumerate(next(iter(segs_by_case.values()))):
         r, c = divmod(i, 2)
-        cv = whatif_curve(seg)
-        fig.add_trace(go.Scatter(
-            x=cv["price"], y=cv["delta_profit"], mode="lines+markers",
-            line=dict(color=BLUE, width=2), marker=dict(size=8, color=BLUE),
-            showlegend=False,
-            customdata=np.c_[cv["utilization"], cv["rentals"]],
-            hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
-                          "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}<extra></extra>"),
-            r + 1, c + 1)
-        fig.add_trace(go.Scatter(x=[seg.price0], y=[0], mode="markers",
+        first = next(iter(segs_by_case.values()))[seg_key]
+        measurable = segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0
+        if not measurable:
+            fig.add_annotation(
+                text="Price sensitivity can't be measured<br>yet, so no curve is drawn",
+                xref="x domain" if i == 0 else f"x{i + 1} domain",
+                yref="y domain" if i == 0 else f"y{i + 1} domain",
+                x=0.5, y=0.75, showarrow=False, font=dict(size=12, color=INK))
+        for case, segs in segs_by_case.items():
+            if not measurable:
+                break
+            seg = segs[seg_key]
+            cv = whatif_curve(seg)
+            fig.add_trace(go.Scatter(
+                x=cv["price"], y=cv["delta_profit"], mode="lines+markers",
+                line=dict(color=colors[case], width=2), marker=dict(size=8, color=colors[case]),
+                name=CASE_LABELS[case], legendgroup=case, showlegend=(i == 0),
+                customdata=np.c_[cv["utilization"], cv["rentals"]],
+                hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
+                              "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}"
+                              f"<extra>{CASE_LABELS[case]}</extra>"), r + 1, c + 1)
+        seg0 = next(iter(segs_by_case.values()))[seg_key]
+        fig.add_trace(go.Scatter(x=[seg0.price0], y=[0], mode="markers", name="Actual price",
                                  marker=dict(size=12, color=ORANGE, line=dict(color="white", width=2)),
-                                 name="Actual", showlegend=(i == 0), hoverinfo="skip"), r + 1, c + 1)
+                                 showlegend=(i == 0), hoverinfo="skip"), r + 1, c + 1)
         fig.add_hline(y=0, line=dict(color=INK, width=1), row=r + 1, col=c + 1)
     fig.update_yaxes(tickformat="$~s", title_text="Δ profit vs actual")
     fig.update_xaxes(tickprefix="$")
+    # Panels with no curve: a fixed, tick-free frame around the single actual-price dot
+    # (otherwise the axes autoscale to a tiny range and show meaningless ticks).
+    for i, seg_key in enumerate(next(iter(segs_by_case.values()))):
+        if segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0:
+            continue
+        r, c = divmod(i, 2)
+        p0 = next(iter(segs_by_case.values()))[seg_key].price0
+        fig.update_yaxes(range=[-1, 1], showticklabels=False, title_text="",
+                         row=r + 1, col=c + 1)
+        fig.update_xaxes(range=[p0 - 3, p0 + 3], tickvals=[p0], ticktext=[f"${p0:.0f}"], row=r + 1, col=c + 1)
     fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 560)
+    return _style(fig, 580)
 
 
 def whatif_heatmap(g: WhatIfGrid) -> go.Figure:
     z = g.profit.values
     fig = go.Figure(go.Heatmap(
         z=z, x=[f"${p:.0f}" for p in g.weekend_prices], y=[f"${p:.0f}" for p in g.weekday_prices],
-        colorscale=SEQ_BLUE, text=[[money(v) for v in row] for row in z],
+        colorscale=SEQ_BLUE, text=[["" if np.isnan(v) else money(v) for v in row] for row in z],
         texttemplate="%{text}", textfont=dict(size=10), xgap=2, ygap=2,
         colorbar=dict(title="Profit", tickformat="$~s"),
         hovertemplate="Weekday %{y} · Weekend %{x}<br>%{text}<extra></extra>"))

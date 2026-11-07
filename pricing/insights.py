@@ -1,46 +1,50 @@
-"""Plain-language readouts generated from the numbers (the workbook's 'Insight' cells were
-typed by hand and went stale; these are recomputed every time)."""
+"""Plain-language readouts generated from the numbers, recomputed on every refresh.
+
+Functions that describe several findings return a list of short strings (one finding each)
+so the UI can show them on separate lines.
+"""
 from __future__ import annotations
 
 from .charts import money
-from .config import CITIES, SEGMENTS
 from .data import SimData
-from .model import (Bridge, BreakEven, DemandVsUtil, PriceVsUtil, WhatIfGrid)
+from .model import Bridge, BreakEven, DemandVsUtil, PriceGuide, PriceVsUtil
 
 
-def demand_readouts(data: SimData, dvu: dict[tuple, DemandVsUtil]) -> dict[tuple, str]:
+def demand_readouts(data: SimData, dvu: dict[tuple, DemandVsUtil]) -> dict[tuple, list[str]]:
+    """Interpretation only; the numbers themselves are shown next to each chart."""
     out = {}
     for seg, d in dvu.items():
         util = d.table["util"]
         bits = []
         if util.max() >= 0.99:
             unfilled = data.market(seg[0], "unfilled")
-            bits.append(f"Capacity-bound: utilization hits {util.max():.0%}"
-                        + (f" with {unfilled.max():,.0f} unfilled orders in the worst month"
-                           if unfilled.max() > 0 else "")
-                        + ", so demand can't lift it further and price is not the constraint.")
-        elif d.r2_demand is not None and d.r2_demand >= 0.9:
-            bits.append(f"Demand explains {d.r2_demand:.0%} of utilization swings "
-                        f"(~{d.demand_slope_pts_per_10k:+.1f} pts per 10K orders).")
-        elif d.r2_demand is not None:
-            bits.append(f"Demand explains only {d.r2_demand:.0%} of utilization swings.")
+            msg = f"Capacity-bound: utilization reaches {util.max():.0%}"
+            if unfilled.max() > 0:
+                msg += f" with up to {unfilled.max():,.0f} unfilled orders"
+            bits.append(msg + ". Extra demand cannot lift utilization further.")
+        if d.r2_demand is not None:
+            if d.r2_demand >= 0.9:
+                bits.append("Demand explains nearly all of the utilization swings.")
+            elif d.r2_demand < 0.7:
+                bits.append("Demand explains only part of the utilization swings, so price or "
+                            "other factors matter here.")
         if d.price_slope_pts is None:
-            bits.append("The Univ–Comp gap never changed, so the price effect can't be tested.")
+            bits.append("The Univ–Comp price gap never changed, so a price effect can't be tested.")
+        elif abs(d.price_slope_pts) < 0.5:
+            bits.append("After removing demand, the price effect is small.")
         else:
-            bits.append(f"After removing demand, each +$1 of price gap moves utilization "
-                        f"{d.price_slope_pts:+.1f} pts.")
-        out[seg] = " ".join(bits)
+            bits.append("After removing demand, price still has a clear effect on utilization.")
+        out[seg] = bits
     return out
 
 
-def price_readouts(pvu: dict[tuple, PriceVsUtil]) -> dict[tuple, str]:
+def price_readouts(pvu: dict[tuple, PriceVsUtil]) -> dict[tuple, list[str]]:
     out = {}
     for seg, p in pvu.items():
         if p.slope_pts is None:
-            out[seg] = "Gap never changed, so the gap-only slope can't be measured."
+            out[seg] = ["The Univ–Comp price gap never changed, so the slope can't be measured."]
         else:
-            out[seg] = (f"Gap alone: {p.slope_pts:+.1f} util pts per +$1 (R² {p.r2:.2f}). "
-                        "This overstates price's effect if demand moved at the same time.")
+            out[seg] = ["This overstates price's effect if demand moved at the same time."]
     return out
 
 
@@ -70,11 +74,33 @@ def weekend_readout(data: SimData, city: str, month: str) -> str | None:
     return None
 
 
-def whatif_readout(g: WhatIfGrid) -> str:
-    if abs(g.best_vs_actual) < 1:
-        return f"{g.city}: current prices are the best in the grid."
-    return (f"{g.city}: best grid prices are ${g.best_weekday:.0f} weekday / "
-            f"${g.best_weekend:.0f} weekend ({money(g.best_vs_actual, True)} vs actual).")
+def pick_readout(g: PriceGuide, data: SimData, month: str) -> list[str]:
+    """The suggestion for a city as separate lines: headline first, then caveats."""
+    out = []
+    if not any(g.measurable.values()):
+        out.append(f"**{g.city}: no price recommendation.** The data can't measure how price "
+                   "affects utilization in either day period yet.")
+    elif g.is_hold:
+        out.append(f"**{g.city}: hold current prices.** No price change in the tested range "
+                   "beats them in the worse of the two cases.")
+    else:
+        out.append(f"**{g.city}: ${g.pick_weekday:.0f} weekday / ${g.pick_weekend:.0f} weekend.** "
+                   f"Profit {money(g.cautious_delta, True)} (cautious) to "
+                   f"{money(g.optimistic_delta, True)} (optimistic) vs {month}.")
+        if g.on_edge:
+            out.append("The pick sits at the edge of the tested range: go in steps and re-check.")
+    for dp in g.held:
+        line = (f"{g.city} {dp.lower()} price held: the data can't measure how price affects "
+                "utilization there")
+        util = data.utilization(g.city, dp)[month]
+        unfilled = data.market(g.city, "unfilled")[month]
+        if util >= 0.99 and unfilled > 0:
+            demand = data.demand(g.city, dp)[month]
+            line += (f" (at capacity with {unfilled:,.0f} unfilled orders, {unfilled / demand:.0%} "
+                     "of demand, so a price rise is plausible, but how far is unknown; test in "
+                     "small steps)")
+        out.append(line + ".")
+    return out
 
 
 def caveats(data: SimData) -> list[str]:
@@ -82,7 +108,4 @@ def caveats(data: SimData) -> list[str]:
     n = len(data.months)
     if n < 6:
         out.append(f"Only {n} months of data: treat slopes as directional.")
-    if data.demand_estimated:
-        out.append("Demand by day period was estimated from unit sales + unfilled orders "
-                   "(paste the 'demand by day period' screen for exact values).")
     return out

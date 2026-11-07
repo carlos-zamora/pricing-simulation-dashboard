@@ -41,13 +41,12 @@ REQUIRED_TABLES = {
     "price": "Price history",
     "capacity_utilization": "Capacity utilization",
     "market_demand": "Market demand",
+    "unit_sales": "Unit sales",
     "net_income_total": "Net income - total",
     "net_income_prv": "Net income - per rented vehicle",
 }
 OPTIONAL_TABLES = {
-    "unit_sales": "Unit sales",
     "fleet_size": "Fleet size",
-    "demand_by_daypart": "Demand by day period",
     "net_income_pvpm": "Net income - per vehicle per month",
     "net_income_pct": "Net income - % of revenue",
 }

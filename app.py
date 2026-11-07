@@ -47,6 +47,16 @@ def show_report(rep: ImportReport) -> None:
             st.write("\n".join(f"- {c}" for c in rep.changed[:200]))
 
 
+def bullets(items) -> str:
+    """Markdown bullet list: one finding per line."""
+    return "\n".join(f"- {i}" for i in items)
+
+
+def nested(lines: list[str]) -> str:
+    """First line as a bullet, the rest as sub-bullets beneath it."""
+    return "\n".join([f"- {lines[0]}", *(f"    - {l}" for l in lines[1:])])
+
+
 def finish_import(rep: ImportReport) -> None:
     """Save, remember the report across the rerun, and refresh every tab."""
     if not rep.errors or rep.imported:
@@ -65,9 +75,18 @@ def data_tab() -> None:
     if "last_report" in st.session_state:
         show_report(st.session_state.pop("last_report"))
     st.subheader("Import a new month")
-    st.caption("Copy each table from the simulation and paste it here, drop the saved .txt files, "
-               "or import a whole folder. Re-importing the same months is safe: values are "
-               "merged by month, and any change to earlier months is flagged.")
+    st.markdown("Copy these tables from the simulation (each paste contains the full history):")
+    st.markdown(bullets([
+        "**Required:** price history, unit sales, market demand, capacity utilization, "
+        "net income *total* and *per rented vehicle* (Orlando and Miami each).",
+        "**Optional:** fleet size, net income *per vehicle per month* (used for the unit-economics "
+        "chart) and *% of revenue*.",
+    ]))
+    st.markdown(bullets([
+        "Paste one table at a time, **or** drop the saved .txt files, **or** import a folder.",
+        "Re-importing the same months is safe: values merge by month.",
+        "Any change to an earlier month is flagged.",
+    ]))
 
     c1, c2 = st.columns(2)
     with c1:
@@ -140,72 +159,163 @@ if len(months_ok) < 2:
     st.stop()
 
 data = SimData(store.facts, months_ok)
+latest, prev = data.months[-1], data.months[-2]    # always: this round vs the previous round
 
-with st.sidebar:
-    st.header("Controls")
-    base = st.selectbox("Base month", data.months, index=0,
-                        help="Start of the profit bridge; 'old prices' in break-even.")
-    focus = st.selectbox("Focus month", data.months, index=len(data.months) - 1,
-                         help="Month the what-if and break-even are built on.")
-    case = st.radio("Price-sensitivity case", model.CASES,
-                    help="Gap-only: slope from Univ–Comp price gap alone (upper bound on price "
-                         "sensitivity). Demand-adjusted: slope left after removing demand "
-                         "(lower bound).")
-    st.caption(f"Months analysed: {', '.join(data.months)}")
-    incomplete = [m for m in store.months() if m not in months_ok]
-    if incomplete:
-        st.warning(f"Incomplete (skipped): {', '.join(incomplete)}. See Import & data.")
-
-if base == focus:
-    st.warning("Base and focus month are the same: pick two different months for the bridge.")
-
-pvu = model.price_vs_util(data)
-dvu = model.demand_vs_util(data)
-segs = model.whatif_segments(data, focus, case, pvu, dvu)
-bridges = {c: model.profit_bridge(data, c, base, focus) for c in CITIES}
-bes = {c: model.break_even(data, c, focus, base) for c in CITIES}
-grids = {c: model.whatif_grid(data, c, focus, segs) for c in CITIES}
-ue = model.unit_economics(data)
-contrib = model.weekday_weekend_contribution(data)
-dem_readouts = insights.demand_readouts(data, dvu)   # also populates demand_estimated
+st.caption(f"Analysing **{latest}** against **{prev}** · months in the data: "
+           f"{', '.join(data.months)}")
+incomplete = [m for m in store.months() if m not in months_ok]
+if incomplete:
+    st.warning(f"Skipped (missing required tables): {', '.join(incomplete)}. "
+               "See the Import & data tab.")
 for note in insights.caveats(data):
     st.caption(f"ℹ️ {note}")
 
-tabs = st.tabs(["Overview", "Price vs Utilization", "Demand vs Utilization", "Profit bridge",
-                "What-if & planner", "Break-even & economics", "Import & data"])
+pvu = model.price_vs_util(data)
+dvu = model.demand_vs_util(data)
+segs_by_case = {c: model.whatif_segments(data, latest, c, pvu, dvu) for c in model.CASES}
+guides = {c: model.price_guide(data, c, latest, segs_by_case) for c in CITIES}
+bridges = {c: model.profit_bridge(data, c, prev, latest) for c in CITIES}
+bes = {c: model.break_even(data, c, latest, prev) for c in CITIES}
+ue = model.unit_economics(data)
+contrib = model.weekday_weekend_contribution(data)
+dem_readouts = insights.demand_readouts(data, dvu)
+
+tabs = st.tabs(["Overview", "Price planner", "Price vs Utilization", "Demand vs Utilization",
+                "Profit bridge", "Break-even & economics", "Import & data"])
 
 # --------------------------------------------------------------------------- #
 # Overview
 # --------------------------------------------------------------------------- #
 with tabs[0]:
-    prev = data.months[data.months.index(focus) - 1] if data.months.index(focus) > 0 else None
+    company = sum(data.net("total", c, "Pre-Tax Profit") for c in CITIES)
+    st.metric(f"Company pre-tax profit, {latest} (Orlando + Miami)", charts.money(company[latest]),
+              charts.money(company[latest] - company[prev], True) + f" vs {prev}")
     cols = st.columns(len(CITIES))
     for col, city in zip(cols, CITIES):
         with col:
             st.subheader(city)
             profit = data.net("total", city, "Pre-Tax Profit")
             m1, m2, m3 = st.columns(3)
-            m1.metric(f"{focus} pre-tax profit", charts.money(profit[focus]),
-                      charts.money(profit[focus] - profit[prev], True) if prev else None)
-            m2.metric("Weekday util", f"{data.utilization(city, 'Weekday')[focus]:.0%}")
-            m3.metric("Weekend util", f"{data.utilization(city, 'Weekend')[focus]:.0%}")
+            m1.metric(f"{latest} pre-tax profit", charts.money(profit[latest]),
+                      charts.money(profit[latest] - profit[prev], True) + f" vs {prev}")
+            m2.metric("Weekday util", f"{data.utilization(city, 'Weekday')[latest]:.0%}")
+            m3.metric("Weekend util", f"{data.utilization(city, 'Weekend')[latest]:.0%}")
             st.plotly_chart(charts.price_and_profit(model.price_vs_profit(data, city)),
                             width="stretch", key=f"ov_{city}")
     st.subheader("Key readouts")
+    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in CITIES))
     lines = [insights.bridge_readout(bridges[c]) for c in CITIES]
     lines += [insights.break_even_readout(bes[c]) for c in CITIES]
-    lines += [x for c in CITIES if (x := insights.weekend_readout(data, c, focus))]
-    lines += [insights.whatif_readout(grids[c]) + f" ({case.split(' (')[0].lower()} case)"
-              for c in CITIES]
-    st.markdown("\n".join(f"- {l}" for l in lines))
+    lines += [x for c in CITIES if (x := insights.weekend_readout(data, c, latest))]
+    st.markdown(bullets(lines))
+
+# --------------------------------------------------------------------------- #
+# Price planner
+# --------------------------------------------------------------------------- #
+with tabs[1]:
+    cautious_segs = segs_by_case[model.CASE_GAP_ONLY]
+    optimistic_segs = segs_by_case[model.CASE_DEMAND_ADJ]
+    st.subheader("Suggested prices")
+    st.markdown(bullets([
+        "Every projection is shown under **two assumptions** about how much utilization drops "
+        "when price rises. The truth is probably between them.",
+        "**Cautious:** all of the utilization change is credited to price (price matters most).",
+        "**Optimistic:** only what is left after removing demand is credited to price "
+        "(price matters least).",
+        "**Suggested price** = the weekday/weekend pair with the best profit in the *worse* of "
+        "the two cases, so it holds up whichever assumption is right.",
+    ]))
+    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in CITIES))
+
+    def fill_suggested() -> None:
+        for city in CITIES:
+            st.session_state[f"plan_{latest}_{(city, 'Weekday')}"] = float(guides[city].pick_weekday)
+            st.session_state[f"plan_{latest}_{(city, 'Weekend')}"] = float(guides[city].pick_weekend)
+
+    st.divider()
+    st.subheader(f"Price planner (starting from {latest} actuals)")
+    st.button("Fill with suggested prices", on_click=fill_suggested)
+    prices: dict[tuple[str, str], float] = {}
+    cols = st.columns(4)
+    for col, seg in zip(cols, SEGMENTS):
+        s = cautious_segs[seg]
+        comp = data.price(seg[0], seg[1], "Comp")[latest]
+        prices[seg] = col.number_input(
+            f"{s.name} ($)", value=float(s.price0), step=1.0, min_value=1.0,
+            key=f"plan_{latest}_{seg}")
+        col.caption(f"actual ${s.price0:.0f} · Comp ${comp:.0f} · util {s.util0:.0%}")
+    scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices) for c in model.CASES}
+    cols = st.columns(len(CITIES))
+    for col, city in zip(cols, CITIES):
+        with col:
+            st.markdown(f"**{city}**")
+            m1, m2 = st.columns(2)
+            for mcol, case in zip((m1, m2), model.CASES):
+                r = scen[case][city]
+                diff = r["profit"] - r["actual"]
+                mcol.metric(f"Profit, {model.CASE_LABELS[case].lower()}", charts.money(r["profit"]),
+                            charts.money(diff, True) + f" vs {latest}",
+                            delta_color="off" if abs(diff) < 1 else "normal")
+            rows = []
+            for dp in DAYPARTS:
+                row = {"Segment": dp}
+                for case in model.CASES:
+                    d = scen[case][city]["detail"][dp]
+                    lab = model.CASE_LABELS[case]
+                    row[f"Utilization ({lab.lower()})"] = f"{d['utilization']:.0%}"
+                    row[f"Δ profit ({lab.lower()})"] = charts.money(d["delta"], True)
+                rows.append(row)
+            col.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    for seg in SEGMENTS:
+        if (not guides[seg[0]].measurable[seg[1]]
+                and abs(prices[seg] - cautious_segs[seg].price0) >= 0.5):
+            st.warning(f"{cautious_segs[seg].name}: price sensitivity can't be measured, so this "
+                       "projection assumes **no volume is lost**. Treat it as a ceiling, not a "
+                       "forecast.")
+    st.caption("Rentals scale with utilization; variable cost per rental is held constant; "
+               "raising price never increases utilization.")
+
+    st.divider()
+    st.subheader("Profit you can count on: weekday × weekend price")
+    st.markdown(bullets([
+        "Each cell is the **worse** of the two cases' profit for that price pair.",
+        "Centre cell = current prices (orange outline). Best cell (black outline) = the "
+        "suggested prices.",
+    ]))
+    cols = st.columns(len(CITIES))
+    for col, city in zip(cols, CITIES):
+        with col:
+            st.markdown(f"**{city}**")
+            g = guides[city]
+            if not any(g.measurable.values()):
+                st.info("No grid: price sensitivity can't be measured in either day period.")
+                continue
+            st.plotly_chart(charts.whatif_heatmap(g.worst), width="stretch", key=f"wi_h_{city}")
+            for dp in g.held:
+                st.caption(f"Blank cells: {dp.lower()} price held (sensitivity unmeasurable).")
+
+    st.subheader("Profit by price: one segment at a time")
+    st.markdown(bullets([
+        "Each line changes only that segment's price; the orange dot is the current price.",
+        "Where the two lines are far apart, the data can't yet tell price from demand.",
+    ]))
+    st.plotly_chart(charts.whatif_lines(segs_by_case), width="stretch", key="wi_lines")
+    st.markdown("**Slopes used** (util pts per +$1 of price, capped at 0):\n" + bullets(
+        f"{cautious_segs[seg].name}: not measurable yet, price held"
+        if cautious_segs[seg].slope_used >= 0 else
+        f"{cautious_segs[seg].name}: cautious {cautious_segs[seg].slope_used:+.1f}, "
+        f"optimistic {optimistic_segs[seg].slope_used:+.1f}" for seg in SEGMENTS))
 
 # --------------------------------------------------------------------------- #
 # Price vs Utilization
 # --------------------------------------------------------------------------- #
-with tabs[1]:
-    st.caption("Slope = utilization points per +$1 of Univ–Comp price gap (negative means being "
-               "pricier costs utilization). R² = share of utilization swings the gap alone "
-               "explains. Demand moves at the same time, so see the next tab before concluding.")
+with tabs[2]:
+    st.markdown(bullets([
+        "**Slope** = utilization points per +$1 of Univ–Comp price gap (negative: being "
+        "pricier costs utilization). This is the *cautious* assumption.",
+        "**R²** = share of utilization swings the gap alone explains.",
+        "Demand moves at the same time, so check the next tab before concluding.",
+    ]))
     ro = insights.price_readouts(pvu)
     for seg in SEGMENTS:
         p = pvu[seg]
@@ -213,17 +323,22 @@ with tabs[1]:
         a, b = st.columns(2)
         a.plotly_chart(charts.price_and_util_by_month(p), width="stretch", key=f"pu1_{seg}")
         b.plotly_chart(charts.util_vs_gap(p), width="stretch", key=f"pu2_{seg}")
-        s = "n/a" if p.slope_pts is None else f"{p.slope_pts:+.1f} pts per $1"
+        sl = "n/a" if p.slope_pts is None else f"{p.slope_pts:+.1f} util pts per +$1 gap"
         r = "n/a" if p.r2 is None else f"{p.r2:.2f}"
-        st.caption(f"Gap slope **{s}** · R² **{r}** — {ro[seg]}")
+        st.markdown(bullets([f"**Gap slope:** {sl}", f"**R²:** {r}", *ro[seg]]))
 
 # --------------------------------------------------------------------------- #
 # Demand vs Utilization
 # --------------------------------------------------------------------------- #
-with tabs[2]:
-    st.caption("Utilization regressed on demand; the leftover is what price (the Univ–Comp gap) "
-               "might explain. The 'price slope' is the effect of price after demand is "
-               "removed.")
+with tabs[3]:
+    st.markdown(bullets([
+        "Utilization is regressed on demand; what is left over is what price (the Univ–Comp "
+        "gap) might explain.",
+        "**Price slope** = the effect of price after demand is removed. This is the "
+        "*optimistic* assumption.",
+        "**Demand** per day period = units sold + unfilled orders (assigned to the busier "
+        "day period). Unit sales are rounded to thousands, so expect about ±0.5%.",
+    ]))
     for seg in SEGMENTS:
         d = dvu[seg]
         st.markdown(f"#### {d.name}")
@@ -234,8 +349,11 @@ with tabs[2]:
         r2 = "n/a" if d.r2_demand is None else f"{d.r2_demand:.2f}"
         ds = "n/a" if d.demand_slope_pts_per_10k is None else f"{d.demand_slope_pts_per_10k:+.1f}"
         ps = "n/a" if d.price_slope_pts is None else f"{d.price_slope_pts:+.1f}"
-        st.caption(f"R² vs demand **{r2}** · demand slope **{ds}** pts per 10K orders · "
-                   f"price slope **{ps}** pts per $1 — {dem_readouts[seg]}")
+        st.markdown(bullets([
+            f"**R² vs demand:** {r2}",
+            f"**Demand slope:** {ds} util pts per 10K orders",
+            f"**Price slope (after demand):** {ps} util pts per +$1 gap",
+            *dem_readouts[seg]]))
     st.markdown("#### Miami: sales vs unfilled orders")
     st.plotly_chart(charts.sales_vs_unfilled(
         data.months, data.market("Miami", "sales"), data.market("Miami", "unfilled"),
@@ -244,10 +362,14 @@ with tabs[2]:
 # --------------------------------------------------------------------------- #
 # Profit bridge
 # --------------------------------------------------------------------------- #
-with tabs[3]:
-    st.caption("Price effect = price change × new volume. Volume effect = volume change × old "
-               "contribution per rental. Variable-cost and fixed-cost steps are straight "
-               "differences; any remainder is rounding in the simulation's reported numbers.")
+with tabs[4]:
+    st.markdown(f"What moved profit from **{prev}** to **{latest}**:")
+    st.markdown(bullets([
+        "**Price effect** = price change × new volume.",
+        "**Volume effect** = volume change × old contribution per rental.",
+        "**Variable cost / rental** and **fixed costs** are straight differences.",
+        "**Rounding** = any remainder from rounding in the simulation's reported numbers.",
+    ]))
     cols = st.columns(len(CITIES))
     for col, city in zip(cols, CITIES):
         with col:
@@ -256,59 +378,14 @@ with tabs[3]:
             st.caption(insights.bridge_readout(bridges[city]))
 
 # --------------------------------------------------------------------------- #
-# What-if & planner
-# --------------------------------------------------------------------------- #
-with tabs[4]:
-    st.subheader(f"Price planner (built on {focus} actuals)")
-    st.caption(f"Enter candidate Univ prices. Projection uses the **{case}** case: utilization "
-               "changes by the case's slope per $1 of price change (never rises with price), "
-               "volume scales with utilization, and the variable cost per rental is held.")
-    prices: dict[tuple[str, str], float] = {}
-    cols = st.columns(4)
-    for col, seg in zip(cols, SEGMENTS):
-        s = segs[seg]
-        comp = data.price(seg[0], seg[1], "Comp")[focus]
-        prices[seg] = col.number_input(
-            f"{s.name} ($)", value=float(s.price0), step=1.0, min_value=1.0,
-            key=f"plan_{focus}_{seg}", help=f"{focus} actual ${s.price0:.0f}; Comp ${comp:.0f}")
-        col.caption(f"actual ${s.price0:.0f} · Comp ${comp:.0f} · util {s.util0:.0%}")
-    scen = model.scenario_profit(data, focus, segs, prices)
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
-        with col:
-            r = scen[city]
-            diff = r["profit"] - r["actual"]
-            col.metric(f"{city} projected pre-tax profit", charts.money(r["profit"]),
-                       charts.money(diff, True) + f" vs {focus} actual",
-                       delta_color="off" if abs(diff) < 1 else "normal")
-            rows = [{"Segment": dp, "Projected utilization": f"{v['utilization']:.0%}",
-                     "Projected rentals": f"{v['rentals']:,.0f}",
-                     "Δ profit": charts.money(v["delta"], True)}
-                    for dp, v in r["detail"].items()]
-            col.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    st.divider()
-
-    st.subheader("Profit by price: one segment at a time")
-    st.caption("Orange dot = actual price. Each curve changes only that segment's price.")
-    st.plotly_chart(charts.whatif_lines(segs), width="stretch", key="wi_lines")
-
-    st.subheader("Profit grid: weekday × weekend price")
-    st.caption("Centre cell = actual prices. Outlines mark actual (orange) and best-in-grid "
-               "(black).")
-    cols = st.columns(len(CITIES))
-    for col, city in zip(cols, CITIES):
-        with col:
-            st.markdown(f"**{city}**")
-            st.plotly_chart(charts.whatif_heatmap(grids[city]), width="stretch", key=f"wi_h_{city}")
-            st.caption(insights.whatif_readout(grids[city]))
-    st.caption("Slopes used (util pts per $1, capped at 0): " + " · ".join(
-        f"{s.name} {s.slope_used:+.1f}" for s in segs.values()))
-
-# --------------------------------------------------------------------------- #
 # Break-even & economics
 # --------------------------------------------------------------------------- #
 with tabs[5]:
-    st.subheader(f"Break-even utilization ({focus} volumes & costs)")
+    st.subheader(f"Break-even utilization ({latest} volumes & costs)")
+    st.markdown(bullets([
+        f"**@ {latest} prices:** profit at each utilization level with the current prices.",
+        f"**@ {prev} prices:** the same, using last round's contribution per rental.",
+    ]))
     cols = st.columns(len(CITIES))
     for col, city in zip(cols, CITIES):
         with col:

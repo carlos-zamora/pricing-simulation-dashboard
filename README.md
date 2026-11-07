@@ -1,7 +1,7 @@
 # Pricing Simulation Dashboard
 
-A Streamlit app that does what `reference/Pricing_Simulation_Analysis.xlsx` does, but a new
-month is a paste instead of a spreadsheet edit. Version 0.1 = **parity with the workbook**.
+A Streamlit app for the pricing simulation: paste each month's tables, then get price/utilization
+analysis, a profit bridge, a what-if planner and break-even charts.
 
 ## Run it
 
@@ -9,7 +9,7 @@ month is a paste instead of a spreadsheet edit. Version 0.1 = **parity with the 
 cd pricing-sim
 pip install -r requirements.txt
 streamlit run app.py          # opens http://localhost:8501
-pytest                        # 44 tests, incl. parity against the workbook
+pytest                        # 52 tests
 ```
 
 First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
@@ -17,51 +17,79 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 ## Each new month
 
 1. Run the simulation, then open **Import & data**.
-2. Either paste each table (the app detects which screen it is; for net income screens pick
-   Orlando or Miami), **or** save the copied tables as `.txt` into `inbox/` / any folder
-   (net income files need `orlando` / `miami` in the file name) and click **Import folder**.
-3. Every paste contains the full history, so re-importing is safe: values merge by month,
-   and any change to an *earlier* month is flagged.
-4. A month shows up in the analysis once it has the required tables (price, capacity
-   utilization, market demand, net income total + per rented vehicle for both cities, and
-   either the day-period demand screen or unit sales).
+2. Paste each table (the app detects which screen it is; for net income screens pick Orlando
+   or Miami), **or** save the copied tables as `.txt` into `inbox/` (or any folder) and click
+   **Import folder**. For folder imports, net income file names need `orlando` / `miami`.
+3. Every paste contains the full history, so re-importing is safe: values merge by month, and
+   any change to an *earlier* month is flagged.
+
+| Table | Needed? |
+|---|---|
+| Price history, unit sales, market demand, capacity utilization | required |
+| Net income **total** and **per rented vehicle** (Orlando and Miami each) | required |
+| Net income **per vehicle per month** | optional (unit-economics chart) |
+| Net income **% of revenue**, fleet size | optional (stored, not yet analysed) |
+
+A month appears in the analysis once every required table is present.
+
+## There are no controls
+
+The app decides these for you, the same way every round:
+
+- **Comparison:** always the latest month against the previous one ("what changed last round").
+  This drives the profit bridge and the break-even comparison line.
+- **Starting point:** always the latest month's prices, utilization and volumes.
+- **Price sensitivity:** how much utilization drops when you raise price can't be pinned down
+  from a handful of months, so every projection shows **two assumptions side by side**:
+  - *Cautious*: slope of utilization vs the Univ–Comp price gap alone. Price gets credit for every
+    utilization change, so it matters most.
+  - *Optimistic*: price slope left after removing demand. Usually much smaller, so price matters
+    least.
+  In both, raising price never increases utilization.
+
+**Suggested prices** (Price planner tab) = the weekday/weekend pair with the best profit in the
+*worse* of the two cases, so it holds up whichever assumption is right. If the cases disagree on
+direction, the suggestion is "hold".
+
+A day period is only moved if the data show price matters there. Where sensitivity can't be
+measured (the price gap never changed, or utilization is pinned at capacity) its price is held
+and the app says why, because otherwise the model would treat price as free and suggest
+unlimited increases.
 
 ## Layout
 
 ```
-app.py                  Streamlit UI (tabs + sidebar controls + price planner)
+app.py                  Streamlit UI (tabs, price planner)
 pricing/
   parsers.py            clipboard text -> tidy facts (table, city, daypart, firm, field, month, value)
-  store.py              append/merge into data/facts.csv, completeness checks
-  data.py               month-indexed accessors; day-period demand fallback
-  model.py              the workbook's math (slopes, bridge, what-if, break-even, unit economics)
+  store.py              merge into data/facts.csv, completeness checks
+  data.py               month-indexed accessors; derived demand
+  model.py              slopes, profit bridge, what-if, break-even, unit economics
   insights.py           readouts regenerated from the numbers
-  charts.py             Plotly figures (validated palette, one axis per chart)
-tests/                  parser tests, parity tests (tests/golden.json), new-month tests
-tools/extract_golden.py regenerates golden.json from the workbook
-sample_data/            the 13 sample pastes + demand_by_daypart.txt
-reference/              the original workbook
+  charts.py             Plotly figures
+tests/                  parser, regression, new-month and guard tests
+  prototype_golden.json frozen expected values from an earlier prototype (no longer maintained)
+  prototype/            test-only: the original spreadsheet and the script that produced the
+                        golden file. The app never reads it, and a test enforces that.
+sample_data/            sample pastes (Jul–Oct)
 ```
 
-## Parity notes (read before trusting a number)
+## Modelling notes
 
-- **Demand by day period** is not one of the 13 sample screens. `sample_data/demand_by_daypart.txt`
-  is taken from the workbook. If you don't paste it, demand is estimated as units sold + unfilled
-  orders (within ~0.1% except Miami weekend, ~4% in Oct) and the app says so.
-- **Rentals** are revenue ÷ price, as in the workbook (not `unit_sales`), so they inherit the
-  simulation's rounding.
-- The what-if keeps the workbook's rules: slope capped at ≤ 0, utilization capped at 100%,
-  each segment independent, variable cost per rental held constant.
-- The **price planner** (What-if tab) is the one addition: the same what-if function driven by
-  four price boxes instead of a fixed ±$6 grid.
-- Florida (combined) net-income rows are not rebuilt; no analysis uses them.
+- **Demand per day period** = units sold + unfilled orders. Unfilled orders are reported for the
+  whole city, so they are assigned to the more utilised day period. Unit sales are rounded to
+  thousands, so expect about ±0.5%.
+- **Rentals** = revenue ÷ price, so they inherit the simulation's rounding.
+- **What-if rules**: slope capped at ≤ 0, utilization capped at 100%, each segment independent,
+  variable cost per rental held constant.
+- With 4–5 months per segment, treat every slope as directional.
 
 ## Ideas for the next iterations
 
 - Round log: record the prices chosen and the resulting profit each round; use it as extra data.
 - Capacity-bound segments (e.g. Miami weekday at 100%): the what-if never shows a price ceiling.
-  Add demand/elasticity estimated from unfilled orders.
-- Pool the four segments or add Comp price as a regressor; 4–5 points per segment is thin.
+  Estimate demand/elasticity from unfilled orders.
+- Pool the four segments or add Comp price as a regressor.
 - Use `unit_sales` for rentals; add share-of-market (Univ vs Comp) analysis.
 - Optimizer over the planner prices (scipy) and a "why this price" explanation panel.
 - Export a meeting summary (PDF/Markdown).

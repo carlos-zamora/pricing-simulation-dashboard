@@ -1,17 +1,25 @@
-"""Extract the Excel workbook's calculated values into tests/golden.json and write the
-'demand by day period' sample paste (the one screen the 13 sample files do not cover).
+"""Test-only provenance: how tests/prototype_golden.json was produced.
 
-Run:  python tools/extract_golden.py
+The original Excel prototype (Pricing_Simulation_Analysis.xlsx, next to this file) is frozen and
+no longer updated. The app never reads it. This script extracts the prototype's calculated
+values (Jul-Oct sample data) into the JSON file the regression tests compare against.
+
+    pip install openpyxl          # test-only; not in requirements.txt
+    python tests/prototype/extract_golden.py [output.json]
+
+By default it rewrites tests/prototype_golden.json, which should come out unchanged.
 """
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import openpyxl
 
-ROOT = Path(__file__).resolve().parents[1]
-WB = ROOT / "reference" / "Pricing_Simulation_Analysis.xlsx"
+HERE = Path(__file__).resolve().parent
+WB = HERE / "Pricing_Simulation_Analysis.xlsx"
+DEFAULT_OUT = HERE.parent / "prototype_golden.json"
 
 
 def num(v):
@@ -22,11 +30,14 @@ def block(ws, rows, cols):
     return [[ws[f"{c}{r}"].value for c in cols] for r in rows]
 
 
-def main() -> None:
+def main(out: Path = DEFAULT_OUT) -> None:
     wb = openpyxl.load_workbook(WB, data_only=True)
     pvu, dvu, pa = wb["Price vs Util"], wb["Demand vs Util"], wb["Profit Analysis"]
 
     golden = {
+        "_comment": "Values calculated by the Excel prototype (Jul-Oct sample data). The prototype "
+                    "is frozen and no longer maintained; these numbers are regression targets "
+                    "only. Do not regenerate.",
         "price_vs_util": {
             "Orlando|Weekday": [num(pvu["B15"].value), num(pvu["B16"].value)],
             "Orlando|Weekend": [num(pvu["B35"].value), num(pvu["B36"].value)],
@@ -40,7 +51,7 @@ def main() -> None:
         },
         "bridge": {"Orlando": [pa[f"B{r}"].value for r in range(27, 34)],
                    "Miami": [pa[f"C{r}"].value for r in range(27, 34)]},
-        "whatif_case_in_workbook": pa["B37"].value,
+        "whatif_case_in_prototype": pa["B37"].value,
         "whatif_slopes_used": [pa[f"H{r}"].value for r in range(40, 44)],
         "whatif_delta": {"Orlando|Weekday": block(pa, [51], "BCDEFGH")[0],
                          "Orlando|Weekend": block(pa, [56], "BCDEFGH")[0],
@@ -55,22 +66,9 @@ def main() -> None:
         "unit_economics": block(pa, range(117, 125), "BCDEFG"),
         "contribution": block(pa, range(129, 137), "BCDEFG"),
     }
-    out = ROOT / "tests" / "golden.json"
     out.write_text(json.dumps(golden, indent=1))
     print("wrote", out)
 
-    # 'Demand - Day Period' as the simulation would paste it (tab separated).
-    ws = wb["Demand - Day Period"]
-    lines = ["\tOrlando\t\t\tMiami\t\t\tFlorida\t\t",
-             "\tDemand\t\tOrders\tDemand\t\tOrders\tDemand\t\tOrders",
-             "Month\tWkdy\tWknd\tTotal\tWkdy\tWknd\tTotal\tWkdy\tWknd\tTotal"]
-    for r in range(4, 8):
-        vals = [ws.cell(r, c).value for c in range(1, 11)]
-        lines.append("\t".join(str(int(v)) if isinstance(v, (int, float)) else str(v) for v in vals))
-    path = ROOT / "sample_data" / "demand_by_daypart.txt"
-    path.write_text("\r\n".join(lines), encoding="utf-8")
-    print("wrote", path)
-
 
 if __name__ == "__main__":
-    main()
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT)
