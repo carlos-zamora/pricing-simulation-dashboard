@@ -11,7 +11,7 @@ FORBIDDEN = re.compile(r"xlsx|openpyxl|excel|workbook", re.IGNORECASE)
 
 def test_runtime_code_never_references_the_prototype():
     hits = [f"{f.relative_to(ROOT)}:{i}: {line.strip()}"
-            for f in RUNTIME for i, line in enumerate(f.read_text().splitlines(), 1)
+            for f in RUNTIME for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
             if FORBIDDEN.search(line)]
     assert not hits, "\n".join(hits)
 
