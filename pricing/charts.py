@@ -63,21 +63,22 @@ def _line(x, y, name, color, **kw) -> go.Scatter:
 # --------------------------------------------------------------------------- #
 def price_and_util_by_month(p: PriceVsUtil) -> go.Figure:
     t = p.table
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Price ($)", "Utilization"),
-                        horizontal_spacing=0.12)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.14,
+                        subplot_titles=("Price ($)", "Utilization"))
     fig.add_trace(_line(t.index, t["univ"], "Univ", UNIV, hovertemplate="%{x}: $%{y:.0f}"), 1, 1)
     fig.add_trace(_line(t.index, t["comp"], "Comp", COMP, hovertemplate="%{x}: $%{y:.0f}"), 1, 1)
     fig.add_trace(_line(t.index, t["util"], "Utilization", AQUA,
-                        hovertemplate="%{x}: %{y:.0%}", showlegend=False), 1, 2)
+                        hovertemplate="%{x}: %{y:.0%}", showlegend=False), 2, 1)
     fig.update_yaxes(tickprefix="$", row=1, col=1)
-    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=1, col=2)
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=2, col=1)
     fig.update_annotations(font=dict(size=12, color=INK))
     return _style(fig, 430)
 
 
 def scatter_with_fit(x, y, labels, xtitle: str, ytitle: str, ytick: str = ".0%",
                      slope_scale: float = 100.0, slope_unit: str = "pts per +$1",
-                     color: str = BLUE, xtick: str | None = None) -> go.Figure:
+                     color: str = BLUE, xtick: str | None = None,
+                     center_x_zero: bool = False) -> go.Figure:
     """Scatter of months plus a least-squares line. The legend states the slope (converted
     with ``slope_scale`` into ``slope_unit``) and R², one fact per line."""
     x, y = np.asarray(x, float), np.asarray(y, float)
@@ -101,6 +102,10 @@ def scatter_with_fit(x, y, labels, xtitle: str, ytitle: str, ytick: str = ".0%",
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", line=dict(color=INK, width=2),
                                  name="Best fit<br>n/a (x never changed)"))
     fig.update_xaxes(title=xtitle, tickformat=xtick)
+    if center_x_zero:
+        # Same x scale and 0 in the middle on every gap chart, so charts compare at a glance.
+        half = (float(np.nanmax(np.abs(x))) if x.size else 0.0) * 1.2 or 1.0
+        fig.update_xaxes(range=[-half, half], zeroline=True, zerolinecolor=INK, zerolinewidth=1)
     fig.update_yaxes(title=ytitle, tickformat=ytick)
     span = float(np.ptp(y)) or abs(float(y.mean())) * 0.1 or 1.0
     fig.update_yaxes(range=[float(y.min()) - 0.15 * span, float(y.max()) + 0.25 * span])
@@ -114,7 +119,8 @@ def scatter_with_fit(x, y, labels, xtitle: str, ytitle: str, ytick: str = ".0%",
 def util_vs_gap(p: PriceVsUtil) -> go.Figure:
     t = p.table
     return scatter_with_fit(t["gap"], t["util"], t.index, "Univ – Comp price gap ($)",
-                            "Utilization", slope_scale=100, slope_unit="util pts per +$1 gap")
+                            "Utilization", slope_scale=100, slope_unit="util pts per +$1 gap",
+                            center_x_zero=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +138,8 @@ def price_effect_after_demand(d: DemandVsUtil) -> go.Figure:
     labels = [f"{m} ({price(g, True)})" for m, g in zip(t.index, t["gap"])]
     return scatter_with_fit(t["gap"], t["residual"] * 100, labels, "Univ – Comp price gap ($)",
                             "Utilization vs demand trend (pts)", ytick=".1f",
-                            slope_scale=1, slope_unit="util pts per +$1 gap", color=ORANGE)
+                            slope_scale=1, slope_unit="util pts per +$1 gap", color=ORANGE,
+                            center_x_zero=True)
 
 
 def indexed_trends(d: DemandVsUtil) -> go.Figure:
@@ -146,19 +153,19 @@ def indexed_trends(d: DemandVsUtil) -> go.Figure:
 
 
 def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Miami orders", "Univ utilization (weekday)"),
-                        horizontal_spacing=0.12)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.14,
+                        subplot_titles=("Miami orders", "Univ utilization (weekday)"))
     fig.add_trace(go.Bar(x=months, y=sales, name="Total sales", marker_color=BLUE,
                          marker_line=dict(color="rgba(0,0,0,0)", width=0),
                          hovertemplate="%{x}: %{y:,.0f}"), 1, 1)
     fig.add_trace(go.Bar(x=months, y=unfilled, name="Unfilled orders", marker_color=ORANGE,
                          hovertemplate="%{x}: %{y:,.0f}"), 1, 1)
     fig.add_trace(_line(months, util, "Utilization", AQUA, showlegend=False,
-                        hovertemplate="%{x}: %{y:.0%}"), 1, 2)
+                        hovertemplate="%{x}: %{y:.0%}"), 2, 1)
     fig.update_layout(barmode="stack")
-    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=1, col=2)
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=2, col=1)
     fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 300)
+    return _style(fig, 420)
 
 
 # --------------------------------------------------------------------------- #
