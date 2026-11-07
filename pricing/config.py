@@ -76,7 +76,7 @@ COPY_LIST = [
     ("market_demand", None, "Market demand", "nothing to select"),
     ("unit_sales", None, "Unit sales", "nothing to select"),
     ("capacity_utilization", None, "Capacity utilization", "nothing to select"),
-    *[("net_income_total", c, "Net income", f"City: {c} · Format: Total") for c in CITIES],
+    *[("net_income_total", c, "Net income", f"**City:** {c}<br>**Format:** Total") for c in CITIES],
 ]
 assert {t for t, *_ in COPY_LIST} == set(REQUIRED_TABLES)
 

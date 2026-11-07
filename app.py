@@ -116,7 +116,7 @@ def data_tab() -> None:
     c1, c2 = st.columns([2, 3])
     with c1:
         st.markdown("**Copy these 6 tabs from the simulation**")
-        st.markdown(copy_list_markdown(newest))
+        st.markdown(copy_list_markdown(newest), unsafe_allow_html=True)  # <br> in the Select column
         if newest and store.missing(newest):
             st.warning(f"{newest} is still missing: {', '.join(store.missing(newest))}.")
         elif newest:

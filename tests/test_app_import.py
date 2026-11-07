@@ -53,7 +53,8 @@ def test_copy_list_is_shown_next_to_the_box(app):
     text = _text(app)
     for tab in ("Price history", "Unit sales", "Market demand", "Capacity utilization"):
         assert f"**{tab}**" in text
-    assert "City: Orlando · Format: Total" in text and "City: Miami · Format: Total" in text
+    for city in ("Orlando", "Miami"):
+        assert f"**City:** {city}<br>**Format:** Total" in text
     assert "Copy these 6 tabs" in text
 
 
