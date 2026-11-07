@@ -11,6 +11,12 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _own_data_file(tmp_path, monkeypatch):
+    """Never depend on (or write) the real data/facts.csv: start from the bundled sample."""
+    monkeypatch.setenv("PRICING_SIM_DATA", str(tmp_path / "facts.csv"))
+
+
 def _run(city=None, daypart=None) -> AppTest:
     at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=120).run()
     if city or daypart:
@@ -37,8 +43,8 @@ def test_default_view_is_florida_both_and_compares_latest_to_previous_month():
         text = _text(at)
         assert "Analysing **Oct** against **Sep**" in text
         assert "Showing: **Orlando + Miami** · **Weekday + Weekend**" in text
-        assert "Our prices for Nov" in text
-        assert "no game month played yet" in text      # sample data: profit shows $0
+        assert "Our prices and capacity for Nov" in text
+        assert "no game month played yet" in text.lower()      # sample data: profit shows $0
         assert "no price recommendation" in text.lower()                # Miami explained, not hidden
         md = [m.value for m in at.markdown]
         assert md.index("**Orlando**") < md.index("**Miami**")  # readouts grouped by city
@@ -55,7 +61,7 @@ def test_every_selector_combination_runs(city, daypart):
     try:
         at = _run(city, daypart)
         assert not at.exception
-        assert len(at.number_input) == 4          # price controls are always all four segments
+        assert len(at.number_input) == 6          # 4 price controls (every segment) + 2 fleet sizes (per city)
         if city == "Miami":
             assert "Orlando:" not in _text(at)
     finally:

@@ -27,10 +27,10 @@ def _lean(full: pd.DataFrame, drop=DERIVED) -> pd.DataFrame:
     return full[~full["table"].isin(drop)].reset_index(drop=True)
 
 
-def test_only_six_screens_are_required():
+def test_only_seven_screens_are_required():
     assert "net_income_prv" not in REQUIRED_TABLES
     assert set(REQUIRED_TABLES) == {"price", "unit_sales", "market_demand",
-                                    "capacity_utilization", "net_income_total"}
+                                    "capacity_utilization", "fleet_size", "net_income_total"}
 
 
 @pytest.mark.parametrize("city", CITIES)
@@ -74,16 +74,16 @@ def test_recommendations_are_the_same_without_the_derived_screens(full):
                                                              rel=0.02, abs=1)
 
 
-def test_a_new_month_needs_only_the_six_screens(full):
-    """November arrives without prv / pvpm / fleet size: it must still be analysed."""
-    nov = full[(full["month"] == "Oct") & ~full["table"].isin((*DERIVED, "fleet_size"))]
+def test_a_new_month_needs_only_the_required_screens(full):
+    """November arrives without prv / pvpm: it must still be analysed."""
+    nov = full[(full["month"] == "Oct") & ~full["table"].isin(DERIVED)]
     facts = pd.concat([full, nov.assign(month="Nov")], ignore_index=True)
     store = Store(ROOT / "data" / "_test_facts.csv")
     store.facts = facts
     assert store.complete_months()[-1] == "Nov"
     data = SimData(store.facts)
     assert data.net("prv", "Miami", "Variable Costs")["Nov"] == pytest.approx(18.0, abs=0.05)
-    assert data.net("pvpm", "Orlando", "Total Revenue")["Nov"] > 0       # fleet carried forward
+    assert data.net("pvpm", "Orlando", "Total Revenue")["Nov"] > 0       # fleet size pasted
     assert len(model.unit_economics(data)) == 2 * len(data.months)
     assert model.break_even(data, "Orlando", "Nov", "Oct").break_even
 

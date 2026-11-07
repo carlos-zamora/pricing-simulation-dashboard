@@ -17,16 +17,17 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 ## Each new month (under a minute)
 
 1. Open **Import & data**. The list beside the box shows what to copy and ticks what is already in.
-2. Copy these **6 tabs** and paste them one after another into the one box (any order):
+2. Copy these **7 tabs** and paste them one after another into the one box (any order):
 
    | # | Tab | Select |
    |:-:|---|---|
    | 1 | Price history | nothing to select |
    | 2 | Market demand | nothing to select |
    | 3 | Unit sales | nothing to select |
-   | 4 | Capacity utilization | nothing to select |
-   | 5 | Net income | City: Orlando, Format: Total |
-   | 6 | Net income | City: Miami, Format: Total |
+   | 4 | Fleet size | nothing to select |
+   | 5 | Capacity utilization | nothing to select |
+   | 6 | Net income | City: Orlando, Format: Total |
+   | 7 | Net income | City: Miami, Format: Total |
 
    The order follows the simulation's tabs left to right, so you can go down the list.
 
@@ -34,7 +35,7 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
    question (each net income city is detected from its numbers).
 
 Nothing else is needed. The per-rented-vehicle, per-vehicle and % screens are derived from net income
-total, and fleet size is not used. If a tab is missing, a banner names it and the dashboard keeps
+total. Fleet size is needed every month because capacity can change. If a tab is missing, a banner names it and the dashboard keeps
 showing the last complete month until you paste it.
 
 Every paste contains the full history, so re-importing is safe: values merge by month, and any

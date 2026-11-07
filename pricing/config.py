@@ -60,12 +60,12 @@ REQUIRED_TABLES = {
     "capacity_utilization": "Capacity utilization",
     "market_demand": "Market demand",
     "unit_sales": "Unit sales",
+    "fleet_size": "Fleet size",
     "net_income_total": "Net income - total",
 }
-# Optional: never needed, because the dashboard derives them from the required tables (fleet size
-# is used for the per-vehicle view when it was pasted before).
+# Optional: never needed, because the dashboard derives them from the required tables. (Fleet size
+# is required: the team sets capacity every month, so it can change.)
 OPTIONAL_TABLES = {
-    "fleet_size": "Fleet size",
     "net_income_prv": "Net income - per rented vehicle",
     "net_income_pvpm": "Net income - per vehicle per month",
     "net_income_pct": "Net income - % of revenue",
@@ -74,12 +74,13 @@ ALL_TABLES = {**REQUIRED_TABLES, **OPTIONAL_TABLES}
 
 
 # What to copy each round, in the left-to-right order of the simulation's tabs (price history, market
-# demand, unit sales, [fleet size], capacity utilization, [market research], net income): (table, city, simulation tab, selection).
+# demand, unit sales, fleet size, capacity utilization, [market research], net income): (table, city, simulation tab, selection).
 # Net income screens are one item per city. Anything else the simulation can show is not needed.
 COPY_LIST = [
     ("price", None, "Price history", "nothing to select"),
     ("market_demand", None, "Market demand", "nothing to select"),
     ("unit_sales", None, "Unit sales", "nothing to select"),
+    ("fleet_size", None, "Fleet size", "nothing to select"),
     ("capacity_utilization", None, "Capacity utilization", "nothing to select"),
     *[("net_income_total", c, "Net income", f"**City:** {c}<br>**Format:** Total") for c in CITIES],
 ]

@@ -110,9 +110,9 @@ def test_one_paste_of_every_sample_equals_importing_the_files(tmp_path, sep):
     assert sort_facts(kept).equals(sort_facts(one_paste.facts))
 
 
-def test_required_six_are_enough_in_any_order(tmp_path):
-    """The six tabs copied each round, shuffled, with the city never stated."""
-    names = ["price_history", "unit_sales", "market_demand", "capacity_utilization",
+def test_required_seven_are_enough_in_any_order(tmp_path):
+    """The seven tabs copied each round, shuffled, with the city never stated."""
+    names = ["price_history", "unit_sales", "market_demand", "fleet_size", "capacity_utilization",
              "net_income_total-orlando", "net_income_total-miami"]
     for seed in range(4):
         random.Random(seed).shuffle(names)

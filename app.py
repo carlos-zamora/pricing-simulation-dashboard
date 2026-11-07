@@ -12,7 +12,7 @@ from pricing.config import (CITIES, CITY_OPTIONS, COPY_LIST, DAYPART_OPTIONS, DA
                             SEGMENTS, item_name, next_month, scope)
 from pricing.data import SimData
 from pricing.parsers import guess_city_from_name
-from pricing.store import ImportReport, Store, sample_months
+from pricing.store import ImportReport, Store
 
 ROOT = Path(__file__).parent
 DATA_FILE = Path(os.environ.get("PRICING_SIM_DATA") or ROOT / "data" / "facts.csv")
@@ -115,14 +115,14 @@ def data_tab() -> None:
     newest = store.newest_month()
     c1, c2 = st.columns([2, 3])
     with c1:
-        st.markdown("**Copy these 6 tabs from the simulation**")
+        st.markdown(f"**Copy these {len(COPY_LIST)} tabs from the simulation**")
         st.markdown(copy_list_markdown(newest), unsafe_allow_html=True)  # <br> in the Select column
         if newest and store.missing(newest):
             st.warning(f"{newest} is still missing: {', '.join(store.missing(newest))}.")
         elif newest:
             st.success(f"Data is complete through {newest}. After the next round, paste the new "
                        "tables.")
-        st.caption("Nothing else is needed: per-vehicle and % screens, fleet size and the Florida "
+        st.caption("Nothing else is needed: per-vehicle and % screens and the Florida "
                    "net income view are not used.")
     with c2:
         st.markdown("**Paste them all here**")
@@ -134,6 +134,8 @@ def data_tab() -> None:
             "After the last paste press **Ctrl+Enter** or click outside the box: it imports "
             "by itself, no button.",
             "Each net income city is detected from its numbers.",
+            "Fleet size is needed every month: you can change capacity in the simulation, "
+            "and the header shows it.",
             "Each paste holds the full history, so re-importing is safe; changes to earlier "
             "months are flagged.",
         ]))
@@ -194,6 +196,31 @@ def data_tab() -> None:
 # --------------------------------------------------------------------------- #
 # Analysis context
 # --------------------------------------------------------------------------- #
+st.markdown("""<style>
+/* One spacing rule for the whole app: blocks are separated only by the flex gap below.
+   Streamlit pads paragraphs and cancels it with a negative margin on the container; we remove both,
+   otherwise a text block loses part of its gap and spacing looks uneven. */
+[data-testid="stMainBlockContainer"] { padding-top: 2.5rem; padding-bottom: 2rem; }
+[data-testid="stVerticalBlock"] { gap: 0.4rem; }
+[data-testid="stHorizontalBlock"] { gap: 0.75rem; }
+[data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+[data-testid="stMarkdownContainer"] p { line-height: 1.4; margin: 0 0 0.4rem 0; }
+[data-testid="stMarkdownContainer"] p:last-child { margin-bottom: 0; }
+[data-testid="stMarkdownContainer"] ul, [data-testid="stMarkdownContainer"] ol { margin: 0; padding-bottom: 0; }
+[data-testid="stMarkdownContainer"] li { line-height: 1.4; margin-bottom: 0; }
+[data-testid="stCaptionContainer"] { line-height: 1.35; margin: 0; padding: 0; }
+[data-testid="stCaptionContainer"] p { margin: 0; }
+[data-testid="stMarkdownContainer"] table { margin: 0; }
+[data-testid="stHeading"] { margin: 0; padding: 0; }
+h1 { padding: 0 0 0.25rem 0; }
+h2, h3 { padding: 0.6rem 0 0 0; }
+hr { margin: 0.2rem 0; }
+[data-testid="stMetric"] { padding: 0; gap: 0; }
+[data-testid="stTabs"] [data-baseweb="tab-panel"] { padding-top: 0.6rem; }
+[data-testid="stAlert"] { padding: 0.4rem 0.75rem; }
+[data-testid="stExpander"] details summary { padding: 0.4rem 0.75rem; }
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlock"] { gap: 0.3rem; }
+</style>""", unsafe_allow_html=True)
 st.title("Pricing Simulation Dashboard")
 months_ok = store.complete_months()
 if len(months_ok) < 2:
@@ -238,9 +265,7 @@ dem_readouts = insights.demand_readouts(data, dvu)
 # --------------------------------------------------------------------------- #
 cautious_segs = segs_by_case[model.CASE_GAP_ONLY]
 optimistic_segs = segs_by_case[model.CASE_DEMAND_ADJ]
-sample_ms = sample_months(store.facts, SAMPLE_DIR)
-played_ms = [m for m in data.months if m not in sample_ms]
-status = model.status_snapshot(data, latest, prev, segs_by_case, played=played_ms)
+status = model.status_snapshot(data, latest, prev, segs_by_case)
 
 
 def fill_suggested() -> None:
@@ -254,6 +279,11 @@ def tone(text: str, good: bool | None) -> str:
     return text if good is None else f":{'green' if good else 'red'}[{text}]"
 
 
+def sign(v: float) -> bool | None:
+    """Good/bad for tone(); a $0 result is neither."""
+    return None if abs(v) < 0.5 else v > 0
+
+
 def flag(text: str) -> str:
     return f":yellow[{text}]"                      # yellow = important, needs attention
 
@@ -263,30 +293,48 @@ def delta_text(v: float, fmt) -> str:
 
 
 next_m = next_month(latest)
-st.markdown(f"**Our prices for {next_m}**")
+st.markdown(f"**Our prices and capacity for {next_m}**")
 prices: dict[tuple[str, str], float] = {}
-for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
+fleets: dict[str, float] = {}
+# Row 1: the four prices. Row 2: one fleet size per city, each box as wide as that city's two prices.
+price_cols = st.columns(len(SEGMENTS))
+for col, seg in zip(price_cols, SEGMENTS):
     s, sg = cautious_segs[seg], status.segments[seg]
-    prices[seg] = col.number_input(f"{s.name} ($)", value=float(s.price0), step=1.0, min_value=1.0,
-                                   key=f"plan_{latest}_{seg}")
+    prices[seg] = col.number_input(f"{s.name} ($)", value=float(s.price0), step=1.0,
+                                   min_value=1.0, key=f"plan_{latest}_{seg}")
     chg = prices[seg] - sg.price
     col.caption(f"{latest}: {charts.price(sg.price)}" + ("" if abs(chg) < 0.005 else
-                " · " + flag(f"{charts.price(chg, True)} change")))
-scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices) for c in model.CASES}
+                " · " + flag(f"{charts.price(chg, True)}")))
+for col, city in zip(st.columns(len(CITIES)), CITIES):
+    cap_now = status.segments[(city, "Weekday")].capacity
+    if cap_now is None:
+        col.caption(f"{city}: no fleet size yet. Paste the Fleet size tab.")
+        continue
+    fleets[city] = col.number_input(f"{city} fleet size (vehicles)", value=float(cap_now),
+                                    step=100.0, min_value=1.0, key=f"plan_cap_{latest}_{city}")
+    chg = fleets[city] - cap_now
+    col.caption(f"{latest}: {cap_now:,.0f}" + ("" if abs(chg) < 0.5 else
+                " · " + flag(f"{chg:+,.0f}")))
+scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices, fleets)
+        for c in model.CASES}
 lo, hi = sorted(sum(scen[c][ci]["profit"] for ci in CITIES) for c in model.CASES)
 st.caption(f"Expected Florida profit at these prices: {charts.money(lo)} to {charts.money(hi)} "
-           "(cautious to optimistic)")
+           "(cautious to optimistic)",
+           help="Capacity is set per city.\n"
+                "Demand is capped by capacity.\n"
+                "Vehicle inventory cost is charged for each vehicle added or removed.")
 
 fl_cum = status.florida_cumulative
 st.markdown(
     f"**Last month: {latest}** · Florida profit/loss "
-    f"**{tone(charts.money(status.florida_profit), status.florida_profit > 0)}** "
+    f"**{tone(charts.money(status.florida_profit), sign(status.florida_profit))}** "
     + delta_text(status.florida_delta, lambda v: charts.money(v, True))
-    + f" · Total since {status.since}: "
-    + ("n/a" if fl_cum is None else f"**{tone(charts.money(fl_cum), fl_cum > 0)}**")
+    + " · Total since game start: "
+    + ("n/a" if fl_cum is None else f"**{tone(charts.money(fl_cum), sign(fl_cum))}**")
     + " · " + " · ".join(f"{c} {charts.money(v)}" for c, v in status.city_profit.items()))
-if latest in sample_ms:
-    st.caption("Sample data: no game month played yet, so profit/loss shows $0 until you paste one.")
+if status.since is None:
+    st.caption("No game month played yet, so profit/loss shows $0 until the first month is played "
+               "(it is read from the simulation's accumulated pre-tax profit).")
 for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
     sg = status.segments[seg]
     rng = sg.elasticity_range
@@ -296,20 +344,24 @@ for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
     with col.container(border=True):
         st.markdown("  \n".join([
             f"**{seg[0]} – {seg[1]}**" + ("  " + flag("⚠ at capacity") if sg.at_capacity else ""),
-            f"Profit **{tone(charts.money(sg.contribution), sg.contribution > 0)}** "
+            f"Profit **{tone(charts.money(sg.contribution), sign(sg.contribution))}** "
             + delta_text(dc, lambda v: charts.money(v, True)),
             f"Price **{charts.price(sg.price)}** · :gray[comp {charts.price(sg.comp_price)}] "
             f"({tone(charts.price(sg.gap, True), None if abs(sg.gap) < 0.005 else sg.gap < 0)})",
             f"Utilization **{tone(f'{sg.utilization:.0%}', util_good)}** "
             + delta_text(du, lambda v: f"{v:+.0f} pts"),
-            ":gray[Capacity " + (f"{sg.capacity:,.0f}]" if sg.capacity else "n/a]"),
+            ":gray[Capacity] " + ("**n/a**" if not sg.capacity else f"**{sg.capacity:,.0f}**" + (
+                "" if sg.capacity_prev is None else " " + delta_text(
+                    sg.capacity - sg.capacity_prev, lambda v: f"{v:+,.0f}"))),
             ":gray[Elasticity (pts per +$1)] " + (
                 flag("not measurable") if rng is None else f":gray[{rng[0]:.1f} to {rng[1]:.1f}]"),
         ]))
 st.divider()
 
+# `key` makes Streamlit remember the open tab across reruns. Without it, any change in the number of
+# banners above the tabs (e.g. a "missing table" warning after a paste) resets it to Overview.
 tabs = st.tabs(["Overview", "Price planner", "Price vs Utilization", "Demand vs Utilization",
-                "Profit bridge", "Break-even & economics", "Import & data"])
+                "Profit bridge", "Break-even & economics", "Import & data"], key="main_tabs")
 
 # --------------------------------------------------------------------------- #
 # Overview

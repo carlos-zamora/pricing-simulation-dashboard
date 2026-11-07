@@ -215,18 +215,55 @@ class WhatIfSegment:
     slope_demand_adj: float | None
     slope_gap_only: float | None
     slope_used: float = 0.0
+    fleet0: float | None = None          # the city's fleet (capacity) last month
+    unfilled0: float = 0.0               # our share of last month's unfilled orders in this period
+    inventory_per_vehicle: float = 0.0   # monthly vehicle inventory cost per vehicle (city level)
 
     @property
     def name(self) -> str:
         return f"{self.city} – {self.daypart}"
 
-    def respond(self, new_price: float) -> tuple[float, float, float]:
-        """(utilization, rentals, change in profit vs the month's actual)."""
-        util = max(0.0, min(1.0, self.util0 + self.slope_used / 100 * (new_price - self.price0)))
-        rentals = self.rentals0 * util / self.util0 if self.util0 else self.rentals0
+    def respond(self, new_price: float, new_fleet: float | None = None
+                ) -> tuple[float, float, float]:
+        """(utilization, rentals, change in profit vs the month's actual).
+
+        Price moves demand (utilization slope). A different fleet changes how much of that demand
+        can be served: rentals = min(demand, capacity), utilization = rentals / capacity. At full
+        capacity last month, our share of the unfilled orders counts as extra demand. Vehicle
+        inventory cost is charged per vehicle added or removed (split between day periods by the
+        caller, see `scenario_profit`)."""
+        util_p = max(0.0, self.util0 + self.slope_used / 100 * (new_price - self.price0))
+        if not self.util0:
+            rentals, util = self.rentals0, 0.0
+        else:
+            cap0 = self.rentals0 / self.util0               # rentals servable at 100% last month
+            fleet = new_fleet if (new_fleet and self.fleet0) else self.fleet0
+            cap = cap0 * fleet / self.fleet0 if self.fleet0 else cap0
+            demand = self.rentals0 * util_p / self.util0
+            if self.util0 >= 0.99:
+                demand += self.unfilled0 * util_p / self.util0
+            rentals = min(demand, cap)
+            util = rentals / cap if cap else 0.0
         delta = ((new_price - self.var_cost) * rentals
                  - (self.price0 - self.var_cost) * self.rentals0)
         return util, rentals, delta
+
+
+def _num(v) -> float | None:
+    return None if pd.isna(v) else float(v)
+
+
+def _our_unfilled(data: SimData, city: str, dp: str, month: str) -> float:
+    """Our share (by unit sales) of the unfilled orders assigned to this day period."""
+    ours, comp = data.units(city, dp, "Univ")[month], data.units(city, dp, "Comp")[month]
+    unfilled = data.demand(city, dp)[month] - ours - comp
+    return float(unfilled * ours / (ours + comp)) if ours + comp > 0 and unfilled > 0 else 0.0
+
+
+def _inventory_per_vehicle(data: SimData, city: str, month: str) -> float:
+    fleet = data.fleet(city)[month]
+    cost = data.net("total", city, "Vehicle Inventory Costs")[month]
+    return 0.0 if pd.isna(fleet) or not fleet else float(cost / fleet)
 
 
 def whatif_segments(data: SimData, month: str, case: str,
@@ -240,7 +277,10 @@ def whatif_segments(data: SimData, month: str, case: str,
             util0=data.utilization(city, dp)[month],
             var_cost=data.net("prv", city, "Variable Costs")[month],
             slope_demand_adj=dvu[(city, dp)].price_slope_pts,
-            slope_gap_only=pvu[(city, dp)].slope_pts)
+            slope_gap_only=pvu[(city, dp)].slope_pts,
+            fleet0=_num(data.fleet(city)[month]),
+            unfilled0=_our_unfilled(data, city, dp, month),
+            inventory_per_vehicle=_inventory_per_vehicle(data, city, month))
         chosen = seg.slope_gap_only if case == CASE_GAP_ONLY else seg.slope_demand_adj
         # Capped at 0: no measured benefit from raising price; 0 where unmeasurable.
         seg.slope_used = 0.0 if chosen is None else min(0.0, chosen)
@@ -256,6 +296,7 @@ class SegmentStatus:
     utilization: float
     utilization_prev: float
     capacity: float | None          # city fleet size (shared by both day periods)
+    capacity_prev: float | None
     price: float
     price_prev: float
     comp_price: float
@@ -286,47 +327,62 @@ class SegmentStatus:
 class Status:
     month: str
     segments: dict[tuple[str, str], SegmentStatus]
-    city_profit: dict[str, float]
+    city_profit: dict[str, float]      # each city's profit/loss in `month` (change in accumulated profit)
     florida_profit: float
-    florida_delta: float               # vs the previous month (0 if that month was not played)
-    florida_cumulative: float | None   # pre-tax profit summed from `since` on; None if not in data
-    since: str
+    florida_delta: float               # profit/loss vs the previous month's profit/loss
+    florida_cumulative: float | None   # the simulation's accumulated pre-tax profit; None if missing
+    since: str | None                  # first month with a profit/loss (None = none played yet)
+
+
+def played_months(data: SimData) -> list[str]:
+    """Months in which the game was really played: the simulation's accumulated pre-tax profit
+    (summed over both cities) moved. It reads $0 until the first month is played, so the
+    starting position and the bundled sample never count as profit or loss."""
+    acc = _accumulated(data).fillna(0.0).sum(axis=1)
+    change = acc.diff().fillna(acc)               # first month compares with $0
+    return [m for m in data.months if abs(change[m]) > 0.5]
+
+
+def _accumulated(data: SimData) -> pd.DataFrame:
+    return pd.DataFrame({c: data.net("total", c, "Accumulated Pre-Tax Profit") for c in CITIES})
 
 
 def status_snapshot(data: SimData, month: str, prev: str, segs_by_case: dict,
-                    since: str = "Oct", played: list[str] | None = None) -> Status:
-    """`played`: months that really were played (default all). Profit and loss only counts
-    those: if the latest month is not played (e.g. the bundled sample), every profit figure is
-    $0, and a change vs a month that was not played is $0."""
-    played_set = set(data.months if played is None else played)
-    live, prev_live = month in played_set, prev in played_set
+                    played: list[str] | None = None) -> Status:
+    """Profit and loss comes from the simulation's own accumulated pre-tax profit: a month's
+    profit/loss is the change in it, the total is its latest value. `played`: months that really
+    were played (default `played_months`); contributions of other months show as $0."""
+    played_set = set(played_months(data) if played is None else played)
+
     def contribution(city: str, dp: str, m: str) -> float:
         return float(data.net("total", city, f"{dp} Contribution")[m]) if m in played_set else 0.0
+
+    def num(v) -> float | None:
+        return None if pd.isna(v) else float(v)
 
     segments = {}
     for city, dp in SEGMENTS:
         cautious = segs_by_case[CASE_GAP_ONLY][(city, dp)]
         optimistic = segs_by_case[CASE_DEMAND_ADJ][(city, dp)]
-        fleet = data.fleet(city)[month]
+        fleet = data.fleet(city)
         util = data.utilization(city, dp)
         price = data.price(city, dp, "Univ")
         now = contribution(city, dp, month)
         segments[(city, dp)] = SegmentStatus(
             city, dp, float(util[month]), float(util[prev]),
-            None if pd.isna(fleet) else float(fleet),
+            num(fleet[month]), num(fleet[prev]),
             float(price[month]), float(price[prev]),
             float(data.price(city, dp, "Comp")[month]),
             cautious.slope_gap_only, optimistic.slope_demand_adj,
-            now, contribution(city, dp, prev) if prev_live else now)
-    pretax = pd.DataFrame({c: data.net("total", c, "Pre-Tax Profit") for c in CITIES})
-    pretax = pretax.mul(pretax.index.isin(played_set), axis=0)   # unplayed months count as $0
-    florida = pretax.sum(axis=1)
-    since_idx = MONTH_ORDER.index(since)
-    counted = [m for m in data.months if MONTH_ORDER.index(m) >= since_idx]
-    delta = float(florida[month] - florida[prev]) if prev_live else 0.0
-    return Status(month, segments, {c: float(pretax[c][month]) for c in CITIES},
-                  float(florida[month]), delta,
-                  float(florida[counted].sum()) if counted else None, since)
+            now, contribution(city, dp, prev))
+    acc = _accumulated(data)
+    change = acc.diff().fillna(acc).fillna(0.0)       # profit/loss per month, per city
+    florida = change.sum(axis=1)
+    total = acc.loc[month]
+    pl = [m for m in data.months if m in played_set]
+    return Status(month, segments, {c: float(change[c][month]) for c in CITIES},
+                  float(florida[month]), float(florida[month]) - float(florida[prev]),
+                  None if total.isna().any() else float(total.sum()), pl[0] if pl else None)
 
 
 DEFAULT_DELTAS = [-6, -4, -2, 0, 2, 4, 6]
@@ -449,16 +505,22 @@ def whatif_curve(seg: WhatIfSegment, deltas: list[int] | None = None) -> pd.Data
     return pd.DataFrame(rows)
 
 
-def scenario_profit(data: SimData, month: str, segs: dict, prices: dict) -> dict:
-    """Project a custom price for each of the four segments (the live meeting tool)."""
+def scenario_profit(data: SimData, month: str, segs: dict, prices: dict,
+                    fleets: dict[str, float] | None = None) -> dict:
+    """Project a custom price for each of the four segments and a fleet size per city (the live
+    meeting tool). Changing the fleet also changes vehicle inventory costs, charged to the city."""
     out = {}
     for city in CITIES:
         total = data.net("total", city, "Pre-Tax Profit")[month]
+        fleet0 = segs[(city, DAYPARTS[0])].fleet0
+        fleet = (fleets or {}).get(city) or fleet0
         detail = {}
         for dp in DAYPARTS:
-            util, rentals, delta = segs[(city, dp)].respond(prices[(city, dp)])
+            util, rentals, delta = segs[(city, dp)].respond(prices[(city, dp)], fleet)
             detail[dp] = dict(utilization=util, rentals=rentals, delta=delta)
             total += delta
+        if fleet0 and fleet != fleet0:
+            total -= (fleet - fleet0) * segs[(city, DAYPARTS[0])].inventory_per_vehicle
         out[city] = dict(profit=total, detail=detail,
                          actual=data.net("total", city, "Pre-Tax Profit")[month])
     return out

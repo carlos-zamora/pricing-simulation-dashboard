@@ -40,10 +40,9 @@ def test_florida_profit_is_sum_of_cities(status):
     assert st.florida_profit == pytest.approx(sum(st.city_profit[c] for c in CITIES))
 
 
-def test_cumulative_counts_from_october(status):
+def test_cumulative_is_the_simulations_accumulated_profit(status):
     data, st = status
-    expected = sum(sum(data.net("total", c, "Pre-Tax Profit")[m] for c in CITIES)
-                   for m in data.months if m in ("Oct", "Nov", "Dec"))
+    expected = sum(data.net("total", c, "Accumulated Pre-Tax Profit")[st.month] for c in CITIES)
     assert st.florida_cumulative == pytest.approx(expected)
 
 
@@ -71,7 +70,7 @@ def test_contribution_has_previous_month(status):
     data, st = status
     sg = st.segments[("Orlando", "Weekday")]
     prev = data.months[-2]
-    assert sg.contribution_prev == data.net("total", "Orlando", "Weekday Contribution")[prev]
+    assert sg.contribution_prev == 0          # sample months were not played: shown as $0
 
 
 def test_price_format_keeps_cents_and_gap_sign():
@@ -83,23 +82,98 @@ def test_price_format_keeps_cents_and_gap_sign():
     assert price(0.0, True) == "$0"
 
 
-def test_sample_months_are_detected_and_profit_counts_only_played_months(status):
-    from pricing.store import sample_months
-    data, st0 = status
-    store_facts = data.facts if hasattr(data, "facts") else None
-    assert store_facts is not None
-    sm = sample_months(store_facts, SAMPLE)
-    assert set(sm) == set(data.months)             # everything here is the bundled sample
+def _with_accumulated(data, values):
+    """Copy of the data where Orlando's accumulated profit is `values` ({month: $}); Miami 0."""
+    f = data.facts.copy()
+    mask = (f["table"] == "net_income_total") & (f["field"] == "Accumulated Pre-Tax Profit")
+    f.loc[mask, "value"] = 0.0
+    f.loc[mask & (f["city"] == "Orlando"), "value"] = f.loc[mask & (f["city"] == "Orlando"),
+                                                           "month"].map(values).fillna(0.0)
+    return SimData(f, data.months)
+
+
+def _status(data, **kw):
     latest, prev = data.months[-1], data.months[-2]
     pvu, dvu = model.price_vs_util(data), model.demand_vs_util(data)
     segs = {c: model.whatif_segments(data, latest, c, pvu, dvu) for c in model.CASES}
-    none_played = model.status_snapshot(data, latest, prev, segs, played=[])
-    assert none_played.florida_profit == 0 and none_played.florida_delta == 0
-    assert none_played.florida_cumulative == 0
-    assert all(s.contribution == 0 and s.contribution_prev == 0
-               for s in none_played.segments.values())
-    # prices and utilization still come from the data
-    assert none_played.segments[("Orlando", "Weekday")].price > 0
-    last_only = model.status_snapshot(data, latest, prev, segs, played=[latest])
-    assert last_only.florida_delta == 0                         # previous month not played
-    assert last_only.florida_cumulative == pytest.approx(st0.florida_profit)
+    return model.status_snapshot(data, latest, prev, segs, **kw)
+
+
+def test_everything_reads_zero_before_the_game_is_played(status):
+    data, st = status                              # bundled sample: accumulated profit is $0
+    assert model.played_months(data) == []
+    assert st.florida_profit == 0 and st.florida_delta == 0 and st.florida_cumulative == 0
+    assert all(v == 0 for v in st.city_profit.values())
+    assert st.since is None
+    assert all(s.contribution == 0 and s.contribution_prev == 0 for s in st.segments.values())
+    assert st.segments[("Orlando", "Weekday")].price > 0     # prices still come from the data
+
+
+def test_profit_and_loss_follow_the_accumulated_profit(status):
+    data, _ = status
+    d = _with_accumulated(data, {"Oct": 2_500_000.0})
+    assert model.played_months(d) == ["Oct"]
+    st = _status(d)
+    assert st.florida_profit == pytest.approx(2_500_000) and st.florida_cumulative == pytest.approx(2_500_000)
+    assert st.florida_delta == 0 + 2_500_000             # previous month's profit/loss was $0
+    assert st.since == "Oct"
+    assert st.segments[("Orlando", "Weekday")].contribution > 0
+    d2 = _with_accumulated(data, {"Sep": 1_000_000.0, "Oct": 2_500_000.0})
+    st2 = _status(d2)
+    assert st2.florida_profit == pytest.approx(1_500_000)
+    assert st2.florida_cumulative == pytest.approx(2_500_000)
+    assert st2.florida_delta == pytest.approx(500_000)   # 1.5M this month vs 1.0M last month
+    assert st2.city_profit["Orlando"] == pytest.approx(1_500_000)
+
+
+def test_capacity_and_its_previous_value_come_from_fleet_size(status):
+    data, st = status
+    sg = st.segments[("Orlando", "Weekday")]
+    assert sg.capacity == data.fleet("Orlando")[st.month] == 22400
+    assert sg.capacity_prev == 22400
+
+
+def _segs(data):
+    latest = data.months[-1]
+    pvu, dvu = model.price_vs_util(data), model.demand_vs_util(data)
+    return latest, model.whatif_segments(data, latest, model.CASE_GAP_ONLY, pvu, dvu)
+
+
+def test_same_fleet_leaves_the_projection_unchanged(status):
+    data, _ = status
+    latest, segs = _segs(data)
+    prices = {k: s.price0 for k, s in segs.items()}
+    base = model.scenario_profit(data, latest, segs, prices)
+    same = model.scenario_profit(data, latest, segs, prices,
+                                 {c: segs[(c, "Weekday")].fleet0 for c in CITIES})
+    for c in CITIES:
+        assert same[c]["profit"] == pytest.approx(base[c]["profit"])
+        assert base[c]["profit"] == pytest.approx(base[c]["actual"])
+
+
+def test_a_bigger_fleet_helps_only_where_demand_is_unserved(status):
+    data, _ = status
+    latest, segs = _segs(data)
+    prices = {k: s.price0 for k, s in segs.items()}
+    base = model.scenario_profit(data, latest, segs, prices)
+    big = model.scenario_profit(data, latest, segs, prices,
+                                {c: segs[(c, "Weekday")].fleet0 * 1.1 for c in CITIES})
+    # Miami weekday ran at 100% with unfilled orders: more cars means more rentals.
+    assert big["Miami"]["detail"]["Weekday"]["rentals"] > base["Miami"]["detail"]["Weekday"]["rentals"]
+    # Orlando had spare cars: rentals do not change, utilization falls.
+    assert big["Orlando"]["detail"]["Weekday"]["rentals"] == pytest.approx(
+        base["Orlando"]["detail"]["Weekday"]["rentals"])
+    assert big["Orlando"]["detail"]["Weekday"]["utilization"] < base["Orlando"]["detail"]["Weekday"]["utilization"]
+    assert big["Orlando"]["profit"] < base["Orlando"]["profit"]       # inventory cost for idle cars
+
+
+def test_a_smaller_fleet_caps_rentals_and_saves_inventory_cost(status):
+    data, _ = status
+    latest, segs = _segs(data)
+    prices = {k: s.price0 for k, s in segs.items()}
+    base = model.scenario_profit(data, latest, segs, prices)
+    small = model.scenario_profit(data, latest, segs, prices,
+                                  {c: segs[(c, "Weekday")].fleet0 * 0.5 for c in CITIES})
+    d = small["Orlando"]["detail"]["Weekday"]
+    assert d["utilization"] == pytest.approx(1.0)                      # demand now exceeds capacity
+    assert d["rentals"] < base["Orlando"]["detail"]["Weekday"]["rentals"]

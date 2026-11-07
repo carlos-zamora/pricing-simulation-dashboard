@@ -10,4 +10,4 @@ Vehicle Inventory Costs	$5180000	$5180000	$5180000	$5180000	$5180000
 Operating Profit Contribution	$3700000	$3370000	$3630000	$4030000.0000000005	$4151960
 Other Fixed Costs	$3450000	$3450000	$3450000	$3450000	$3450000
 Pre-Tax Profit	$248560	-$75530	$183370	$581830	$701960
-Accumulated Pre-Tax Profit	$0.00	$0.00	$0.00	$0.00	$0.00
+Accumulated Pre-Tax Profit	$0.00	$0.00	$0.00	$0.00	$701960

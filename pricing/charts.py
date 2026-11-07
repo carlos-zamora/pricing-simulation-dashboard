@@ -213,7 +213,9 @@ def bridge_chart(b: Bridge) -> go.Figure:
         connector=dict(line=dict(color=GRID, width=1)),
         hovertemplate="%{x}: %{text}<extra></extra>"))
     fig.update_yaxes(tickformat="$~s")
-    return _style(fig, 340, legend=False)
+    _style(fig, 300, legend=False)
+    fig.update_layout(margin=dict(t=24))       # no legend or subplot titles: no room needed above
+    return fig
 
 
 def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]],

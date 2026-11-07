@@ -17,7 +17,7 @@ pytest tests/test_price_guide.py -q    # one file while iterating
 ```
 
 - Needs a recent Streamlit (charts use `width="stretch"`). Developed on Streamlit 1.67, Plotly 7, pandas 3.
-- First launch with no `data/facts.csv` loads `sample_data/` (Jul–Oct) so the app is never empty.
+- First launch with no `data/facts.csv` loads `sample_data/` (Jul–Oct) so the app is never empty. `data/facts.csv` is the user's live data: see hard rule 6.
 - Run `pytest` before finishing any task. Tests must pass without the real `data/facts.csv`.
 
 ## Hard rules (the user asked for these explicitly)
@@ -48,8 +48,13 @@ pytest tests/test_price_guide.py -q    # one file while iterating
      (Univ blue, Comp orange, aqua, magenta), assigned in fixed order. Text never uses the series color.
    - Use newlines (bullet lists, `<br>` in Plotly text, line breaks in `help=` tooltips) to separate
      separate insights or values. The user finds dense single paragraphs hard to read.
-6. **Don't commit user data.** `data/facts.csv` and `data/_test_facts.csv` are git-ignored. Never
-   overwrite `data/facts.csv` when making changes.
+6. **Never touch `data/facts.csv`** unless the user asks for that specific change in that message
+   (a past permission does not carry over). It is the user's live game record and must hold **only the
+   simulation's historical data, `sample_data/original/`, Jul–Oct**, plus months they paste themselves.
+   Never import `test_november/` or other fixtures into it, never "refresh" it to make a demo look right,
+   and never run anything that writes to it (tests and ad-hoc scripts must use `PRICING_SIM_DATA` or
+   `data/_test_facts.csv`). If it needs resetting, rebuild from `sample_data/original/` only, after the user says so.
+   Both it and `_test_facts.csv` are git-ignored.
 
 ## Architecture
 
@@ -94,8 +99,10 @@ trailing newline). Parser changes must keep all 13 files in `sample_data/` parsi
 `test_paste_many.py`).
 
 **What the user copies each round (`config.COPY_LIST`, shown beside the paste box):** price history, unit
-sales, market demand, capacity utilization, net income total for Orlando and Miami. That is all
-`REQUIRED_TABLES` needs. Per-rented-vehicle (`prv`) and per-vehicle-per-month (`pvpm`) views are
+sales, market demand, **fleet size**, capacity utilization, net income total for Orlando and Miami (7 tabs).
+That is all `REQUIRED_TABLES` needs. Fleet size is required because the team sets capacity every month
+(per city); the Import & data tab builds its heading and checklist from `COPY_LIST`, so adding a table there
+updates it, but its captions/tips and the README table are hand-written: update them too. Per-rented-vehicle (`prv`) and per-vehicle-per-month (`pvpm`) views are
 *derived* in `SimData.net` (total / rentals, total / fleet) and a stored screen wins when present.
 Don't make a derivable screen required again: the user has 1-2 minutes per round.
 
@@ -126,13 +133,41 @@ Don't make a derivable screen required again: the user has 1-2 minutes per round
 - Miami: no recommendation. Weekday is at 100% utilization with about 64,000 unfilled orders (about 10% of demand);
   weekend price gap never changed.
 
+## Profit/loss, capacity and the planner (added after the game started)
+
+- **Profit/loss comes from the simulation's `Accumulated Pre-Tax Profit` row** (Net income - total paste), not
+  from monthly pre-tax profit. A month's P/L = change in accumulated; "Total since game start" = its latest
+  value; `model.played_months` = months where it moved. Everything reads $0 until the first month is played
+  (Jul–Oct history is $0). Open question: whether the real simulation fills that row each round; if the user's
+  first real month still shows `$0.00` there, switch to monthly pre-tax profit.
+- Segment cards show day-period *contribution* (before fixed costs), not pre-tax profit, so they differ from the
+  Florida figure by design.
+- **Capacity** is set per **city** (fleet size), not per day period. `WhatIfSegment.respond(price, new_fleet)`:
+  rentals = min(demand, capacity); at full capacity our share of unfilled orders counts as extra demand;
+  `scenario_profit(..., fleets)` charges vehicle inventory cost per vehicle added/removed. `price_guide` still
+  assumes the current fleet (the suggestion ignores the fleet boxes).
+- Planner inputs: row 1 = four prices, row 2 = two fleet boxes (each as wide as that city's two prices). Keys
+  `plan_{latest}_{segment}` and `plan_cap_{latest}_{city}`.
+- `st.tabs(..., key="main_tabs")` keeps the open tab across reruns. Without a key, a change in the number of
+  banners above the tabs (e.g. "Missing for Nov" after a partial paste) resets to Overview. `AppTest` can't
+  check this: verify in the browser.
+- A compact-spacing `<style>` block sits above the title in `app.py`. The user wants the top of the page
+  compact (live team meetings): don't add headings or captions there without need; prefer tooltips (`help=`).
+
+## Fixtures
+
+- `sample_data/original/` = the simulation's real historical data (Jul–Oct). `sample_data/` is an identical copy
+  used by first launch and tests.
+- `test_november/` = fabricated November for end-to-end testing (net income Accumulated row set to Nov profit).
+  It is test material only: never merge it into `data/facts.csv`.
+
 ## Tests
 
 - `test_parsers.py`: number parsing, kind detection, net-income basis detection, merge idempotence.
 - `test_paste_many.py`: splitting one paste into tables (any separator, any order), city detection,
   `add_pasted` equals importing the files. `test_derived_views.py`: derived prv/pvpm match the real screens
   and the price guide is unchanged. `test_app_import.py`: the box end to end (uses `PRICING_SIM_DATA` to point
-  the app at a temp file, never `facts.csv`), partial paste banner.
+  the app at a temp file, never `facts.csv`), partial paste banner, missing Fleet size banner.
 - `test_parity.py`: compares the model with `tests/prototype_golden.json`, a **frozen** snapshot of the
   old spreadsheet's results. Exact match for most stats; demand-based stats use tolerances because
   demand is now derived (Miami weekend Oct differs about 4%, so its demand-slope tolerance is 1.5). The golden
@@ -141,7 +176,8 @@ Don't make a derivable screen required again: the user has 1-2 minutes per round
 - `test_new_month.py`: simulates importing a new month end to end.
 - `test_price_guide.py`: worst case ≤ both cases; Orlando hold at 41/34; Miami unmeasurable and
   no recommendation; agreeing cases pick the best cell.
-- `test_app_smoke.py`: Streamlit `AppTest` headless run: sidebar has only the two radios, every city x day-period combination runs, "Analysing **Oct** against **Sep**",
+- `test_status_snapshot.py`: accumulated-profit P/L ($0 before play), capacity and fleet-change what-ifs.
+- `test_app_smoke.py` (sets `PRICING_SIM_DATA` to a temp file automatically): Streamlit `AppTest` headless run: sidebar has only the two radios, 6 number inputs (4 prices + 2 fleets), every city x day-period combination runs, "Analysing **Oct** against **Sep**",
   "no price recommendation" shown.
 - `test_no_prototype_dependency.py`: the guard in rule 1.
 - Tests that need a store use `data/_test_facts.csv`, never `facts.csv`.
