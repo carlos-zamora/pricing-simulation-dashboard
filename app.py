@@ -100,11 +100,11 @@ def import_pasted() -> None:
 
 def copy_list_markdown(month: str | None) -> str:
     """The tabs to copy, with a tick for each one already held for the newest month."""
-    head = f"| Copy this tab | Select | {month or 'Status'} |"
-    rows = [head, "|---|---|:-:|"]
-    for table, city, tab, pick in COPY_LIST:
+    head = f"| # | Copy this tab | Select | {month or 'Status'} |"
+    rows = [head, "|:-:|---|---|:-:|"]
+    for n, (table, city, tab, pick) in enumerate(COPY_LIST, 1):
         have = month is not None and item_name(table, city) not in store.missing(month)
-        rows.append(f"| **{tab}** | {pick} | {':green[✓]' if have else ':red[✗]'} |")
+        rows.append(f"| {n} | **{tab}** | {pick} | {':green[✓]' if have else ':red[✗]'} |")
     return "\n".join(rows)
 
 

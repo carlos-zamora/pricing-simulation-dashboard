@@ -19,14 +19,16 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 1. Open **Import & data**. The list beside the box shows what to copy and ticks what is already in.
 2. Copy these **6 tabs** and paste them one after another into the one box (any order):
 
-   | Tab | Select |
-   |---|---|
-   | Price history | nothing to select |
-   | Unit sales | nothing to select |
-   | Market demand | nothing to select |
-   | Capacity utilization | nothing to select |
-   | Net income | City: Orlando, Format: Total |
-   | Net income | City: Miami, Format: Total |
+   | # | Tab | Select |
+   |:-:|---|---|
+   | 1 | Price history | nothing to select |
+   | 2 | Market demand | nothing to select |
+   | 3 | Unit sales | nothing to select |
+   | 4 | Capacity utilization | nothing to select |
+   | 5 | Net income | City: Orlando, Format: Total |
+   | 6 | Net income | City: Miami, Format: Total |
+
+   The order follows the simulation's tabs left to right, so you can go down the list.
 
 3. Press **Ctrl+Enter** (or click outside the box). It imports by itself: no button, no city
    question (each net income city is detected from its numbers).

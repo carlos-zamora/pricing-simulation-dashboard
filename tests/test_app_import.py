@@ -90,3 +90,12 @@ def test_net_income_that_cannot_be_matched_asks_for_a_city(tmp_path, monkeypatch
     at.button[[b.label for b in at.button].index("Import with these cities")].click()
     at.run()
     assert not at.exception and not at.selectbox
+
+
+def test_copy_list_is_numbered_in_the_order_of_the_simulation_tabs(app):
+    table = next(m.value for m in app.markdown if "Copy this tab" in m.value)
+    rows = [r.split("|")[1:3] for r in table.splitlines()[2:]]
+    assert [n.strip() for n, _ in rows] == ["1", "2", "3", "4", "5", "6"]
+    assert [t.strip("* ") for _, t in rows] == ["Price history", "Market demand", "Unit sales",
+                                                 "Capacity utilization", "Net income", "Net income"]
+    assert "Orlando" in table.splitlines()[6] and "Miami" in table.splitlines()[7]

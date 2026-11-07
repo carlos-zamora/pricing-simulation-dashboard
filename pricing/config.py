@@ -68,12 +68,13 @@ OPTIONAL_TABLES = {
 ALL_TABLES = {**REQUIRED_TABLES, **OPTIONAL_TABLES}
 
 
-# What to copy each round, in the order shown to the user: (table, city, simulation tab, selection).
+# What to copy each round, in the left-to-right order of the simulation's tabs (price history, market
+# demand, unit sales, [fleet size], capacity utilization, [market research], net income): (table, city, simulation tab, selection).
 # Net income screens are one item per city. Anything else the simulation can show is not needed.
 COPY_LIST = [
     ("price", None, "Price history", "nothing to select"),
-    ("unit_sales", None, "Unit sales", "nothing to select"),
     ("market_demand", None, "Market demand", "nothing to select"),
+    ("unit_sales", None, "Unit sales", "nothing to select"),
     ("capacity_utilization", None, "Capacity utilization", "nothing to select"),
     *[("net_income_total", c, "Net income", f"City: {c} · Format: Total") for c in CITIES],
 ]
