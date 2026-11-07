@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 
 from .config import ALL_TABLES, MONTH_ORDER, REQUIRED_TABLES, CITIES
-from .parsers import FACT_COLUMNS, Parsed, ParseError, guess_city_from_name, parse_text
+from .parsers import (FACT_COLUMNS, Parsed, ParseError, guess_city_from_name, parse_text,
+                      split_tables)
 
 KEY = ["table", "city", "daypart", "firm", "field", "month"]
 
@@ -20,6 +21,7 @@ class ImportReport:
     changed: list[str] = field(default_factory=list)          # history that differs from before
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)       # net income texts still needing a city
 
 
 def empty_facts() -> pd.DataFrame:
@@ -47,6 +49,47 @@ def sort_facts(df: pd.DataFrame) -> pd.DataFrame:
     return (df.assign(_o=df["month"].map(order))
               .sort_values(["table", "city", "daypart", "firm", "field", "_o"])
               .drop(columns="_o").reset_index(drop=True))
+
+
+# A net income table is matched to the city whose prices (and unit sales) it reproduces.
+# Unit sales are rounded to thousands, so a true match is off by a percent or so, while
+# Orlando and Miami differ by tens of percent.
+_CITY_MATCH_MAX, _CITY_OTHER_MIN = 0.05, 0.10
+
+
+def infer_net_income_city(parsed: Parsed, facts: pd.DataFrame) -> str | None:
+    """Which city a net income table belongs to, judged from the numbers (None = can't tell).
+
+    Only the total basis can be placed: weekday and weekend revenue must equal our price x our
+    unit sales in that city. The per-vehicle and % screens carry nothing that separates the
+    cities (both cities often charge the same price), so they need the city given.
+    """
+    if parsed.kind != "net_income" or parsed.table != "net_income_total":
+        return None
+    ours = facts[facts["firm"] == "Univ"]
+    scores: dict[str, float] = {}
+    for city in CITIES:
+        errs = []
+        for dp in ("Weekday", "Weekend"):
+            line = parsed.facts[parsed.facts["field"] == f"Revenue from {dp} Rentals"]
+            price = ours[(ours["table"] == "price") & (ours["city"] == city)
+                         & (ours["daypart"] == dp)].set_index("month")["value"]
+            units = ours[(ours["table"] == "unit_sales") & (ours["city"] == city)
+                         & (ours["daypart"] == dp)].set_index("month")["value"]
+            for month, rev in line.set_index("month")["value"].items():
+                if month not in price.index:
+                    continue
+                if month in units.index:
+                    errs.append(abs(rev / (price[month] * units[month]) - 1))
+        if errs:
+            scores[city] = sum(errs) / len(errs)
+    if len(scores) < len(CITIES):
+        return None
+    best = min(scores, key=scores.get)
+    others = [v for c, v in scores.items() if c != best]
+    if scores[best] <= _CITY_MATCH_MAX and all(v >= _CITY_OTHER_MIN for v in others):
+        return best
+    return None
 
 
 class Store:
@@ -93,6 +136,34 @@ class Store:
             report.errors.append(f"{label or 'pasted text'}: {exc}")
             return report
         return self.add_parsed(parsed, report, label)
+
+    def add_pasted(self, text: str, city: str | None = None, label: str = "Table",
+                   report: ImportReport | None = None) -> ImportReport:
+        """Import one paste holding any number of tables, in any order.
+
+        Net income screens carry no city: it is detected from the prices and unit sales (already
+        stored, or pasted in the same go). Screens it can't place are left in
+        ``report.unresolved`` unless ``city`` says which city they are.
+        """
+        report = report or ImportReport()
+        parsed: list[tuple[str, Parsed]] = []
+        for i, block in enumerate(split_tables(text), 1):
+            try:
+                parsed.append((block, parse_text(block, city=city, defer_city=True)))
+            except ParseError as exc:
+                report.errors.append(f"{label} {i}: {exc}")
+        reference = pd.concat([self.facts] + [p.facts for _, p in parsed
+                                              if p.kind != "net_income"], ignore_index=True)
+        for i, (block, p) in enumerate(parsed, 1):
+            note = ""
+            if p.kind == "net_income" and p.city is None:
+                found = infer_net_income_city(p, reference)
+                if found is None:
+                    report.unresolved.append(block)
+                    continue
+                p, note = p.with_city(found), " (city detected from prices and sales)"
+            self.add_parsed(p, report, label=f"{label} {i}{note}")
+        return report
 
     def add_folder(self, folder: str | Path) -> ImportReport:
         """Import every .txt file in a folder (city for net income taken from file name)."""
