@@ -37,7 +37,9 @@ def test_default_view_is_florida_both_and_compares_latest_to_previous_month():
         text = _text(at)
         assert "Analysing **Oct** against **Sep**" in text
         assert "Showing: **Orlando + Miami** · **Weekday + Weekend**" in text
-        assert "no price recommendation" in text                # Miami explained, not hidden
+        assert "no price recommendation" in text.lower()                # Miami explained, not hidden
+        md = [m.value for m in at.markdown]
+        assert md.index("**Orlando**") < md.index("**Miami**")  # readouts grouped by city
     finally:
         if not existed and data_file.exists():
             data_file.unlink()

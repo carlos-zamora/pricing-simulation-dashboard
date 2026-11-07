@@ -53,9 +53,20 @@ def bullets(items) -> str:
     return "\n".join(f"- {i}" for i in items)
 
 
+TONE_COLOR = {insights.GOOD: "green", insights.BAD: "red", insights.INFO: "yellow"}
+
+
 def nested(lines: list[str]) -> str:
-    """First line as a bullet, the rest as sub-bullets beneath it."""
-    return "\n".join([f"- {lines[0]}", *(f"    - {l}" for l in lines[1:])])
+    """First line as a bullet, highlighted by tone (green good news, red bad news, yellow other),
+    with the rest as sub-bullets beneath it."""
+    color = TONE_COLOR[getattr(lines, "tone", insights.INFO)]
+    return "\n".join([f"- :{color}-background[{lines[0]}]", *(f"    - {l}" for l in lines[1:])])
+
+
+def city_block(name: str, items: list[list[str]]) -> None:
+    """A city heading, then each insight as a headline bullet with its support beneath."""
+    st.markdown(f"**{name}**")
+    st.markdown("\n".join(nested(i) for i in items if i))
 
 
 def finish_import(rep: ImportReport) -> None:
@@ -222,14 +233,12 @@ with tabs[0]:
             st.plotly_chart(charts.price_and_profit(pp, sel_dayparts, perf_label),
                             width="stretch", key=f"ov_{city}")
     st.subheader("Key readouts")
-    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in sel_cities))
-    lines = [insights.bridge_readout(bridges[c]) for c in sel_cities]
     if multi_city:
-        lines.insert(0, insights.bridge_readout(model.combine_bridges([bridges[c] for c in sel_cities])))
-    lines += [insights.break_even_readout(bes[c]) for c in sel_cities]
-    if "Weekend" in sel_dayparts:
-        lines += [x for c in sel_cities if (x := insights.weekend_readout(data, c, latest))]
-    st.markdown(bullets(lines))
+        city_block("Florida (Orlando + Miami)",
+                   [insights.profit_insight(model.combine_bridges([bridges[c] for c in sel_cities]))])
+    for city in sel_cities:
+        city_block(city, insights.city_readouts(city, guides[city], bridges[city], bes[city],
+                                                data, latest, sel_dayparts))
     if not whole_city:
         st.caption(CITY_LEVEL_NOTE + " (Bridge, break-even and the price suggestion above.)")
 
@@ -249,7 +258,8 @@ with tabs[1]:
         "**Suggested price** = the weekday/weekend pair with the best profit in the *worse* of "
         "the two cases, so it holds up whichever assumption is right.",
     ]))
-    st.markdown("\n".join(nested(insights.pick_readout(guides[c], data, latest)) for c in sel_cities))
+    for city in sel_cities:
+        city_block(city, [insights.price_insight(guides[city], data, latest)])
 
     def fill_suggested() -> None:
         for city in CITIES:
@@ -336,11 +346,10 @@ with tabs[1]:
         "Where the two lines are far apart, the data can't yet tell price from demand.",
     ]))
     st.plotly_chart(charts.whatif_lines(segs_by_case, sel_segs), width="stretch", key="wi_lines")
-    st.markdown("**Slopes used** (util pts per +$1 of price, capped at 0):\n" + bullets(
-        f"{cautious_segs[seg].name}: not measurable yet, price held"
-        if cautious_segs[seg].slope_used >= 0 else
-        f"{cautious_segs[seg].name}: cautious {cautious_segs[seg].slope_used:+.1f}, "
-        f"optimistic {optimistic_segs[seg].slope_used:+.1f}" for seg in sel_segs))
+    st.markdown("**Slopes used** (util pts per +$1 of price, capped at 0)")
+    for city in sel_cities:
+        city_block(city, insights.slope_insight(
+            cautious_segs, optimistic_segs, [(city, dp) for dp in sel_dayparts]))
 
 # --------------------------------------------------------------------------- #
 # Price vs Utilization
@@ -353,15 +362,16 @@ with tabs[2]:
         "Demand moves at the same time, so check the next tab before concluding.",
     ]))
     ro = insights.price_readouts(pvu)
-    for seg in sel_segs:
-        p = pvu[seg]
-        st.markdown(f"#### {p.name}")
-        a, b = st.columns(2)
-        a.plotly_chart(charts.price_and_util_by_month(p), width="stretch", key=f"pu1_{seg}")
-        b.plotly_chart(charts.util_vs_gap(p), width="stretch", key=f"pu2_{seg}")
-        sl = "n/a" if p.slope_pts is None else f"{p.slope_pts:+.1f} util pts per +$1 gap"
-        r = "n/a" if p.r2 is None else f"{p.r2:.2f}"
-        st.markdown(bullets([f"**Gap slope:** {sl}", f"**R²:** {r}", *ro[seg]]))
+    for city in sel_cities:
+        st.markdown(f"### {city}")
+        for dp in sel_dayparts:
+            seg = (city, dp)
+            p = pvu[seg]
+            st.markdown(f"#### {p.name}")
+            a, b = st.columns(2)
+            a.plotly_chart(charts.price_and_util_by_month(p), width="stretch", key=f"pu1_{seg}")
+            b.plotly_chart(charts.util_vs_gap(p), width="stretch", key=f"pu2_{seg}")
+            st.markdown(nested(insights.price_segment_insight(p, ro[seg])))
 
 # --------------------------------------------------------------------------- #
 # Demand vs Utilization
@@ -375,26 +385,22 @@ with tabs[3]:
         "**Demand** per day period = units sold + unfilled orders (assigned to the busier "
         "day period). Unit sales are rounded to thousands, so expect about ±0.5%.",
     ]))
-    for seg in sel_segs:
-        d = dvu[seg]
-        st.markdown(f"#### {d.name}")
-        a, b, c = st.columns(3)
-        a.plotly_chart(charts.util_vs_demand(d), width="stretch", key=f"dv1_{seg}")
-        b.plotly_chart(charts.price_effect_after_demand(d), width="stretch", key=f"dv2_{seg}")
-        c.plotly_chart(charts.indexed_trends(d), width="stretch", key=f"dv3_{seg}")
-        r2 = "n/a" if d.r2_demand is None else f"{d.r2_demand:.2f}"
-        ds = "n/a" if d.demand_slope_pts_per_10k is None else f"{d.demand_slope_pts_per_10k:+.1f}"
-        ps = "n/a" if d.price_slope_pts is None else f"{d.price_slope_pts:+.1f}"
-        st.markdown(bullets([
-            f"**R² vs demand:** {r2}",
-            f"**Demand slope:** {ds} util pts per 10K orders",
-            f"**Price slope (after demand):** {ps} util pts per +$1 gap",
-            *dem_readouts[seg]]))
-    if "Miami" in sel_cities:
-        st.markdown("#### Miami: sales vs unfilled orders")
-        st.plotly_chart(charts.sales_vs_unfilled(
-            data.months, data.market("Miami", "sales"), data.market("Miami", "unfilled"),
-            data.utilization("Miami", "Weekday")), width="stretch", key="miami_unfilled")
+    for city in sel_cities:
+        st.markdown(f"### {city}")
+        for dp in sel_dayparts:
+            seg = (city, dp)
+            d = dvu[seg]
+            st.markdown(f"#### {d.name}")
+            a, b, c = st.columns(3)
+            a.plotly_chart(charts.util_vs_demand(d), width="stretch", key=f"dv1_{seg}")
+            b.plotly_chart(charts.price_effect_after_demand(d), width="stretch", key=f"dv2_{seg}")
+            c.plotly_chart(charts.indexed_trends(d), width="stretch", key=f"dv3_{seg}")
+            st.markdown(nested(insights.demand_segment_insight(d, dem_readouts[seg])))
+        if city == "Miami":
+            st.markdown("#### Miami: sales vs unfilled orders")
+            st.plotly_chart(charts.sales_vs_unfilled(
+                data.months, data.market("Miami", "sales"), data.market("Miami", "unfilled"),
+                data.utilization("Miami", "Weekday")), width="stretch", key="miami_unfilled")
 
 # --------------------------------------------------------------------------- #
 # Profit bridge
@@ -417,7 +423,7 @@ with tabs[4]:
         with col:
             st.subheader(name)
             st.plotly_chart(charts.bridge_chart(br), width="stretch", key=f"br_{name}")
-            st.caption(insights.bridge_readout(br))
+            st.markdown(nested(insights.profit_insight(br)))
 
 # --------------------------------------------------------------------------- #
 # Break-even & economics
@@ -435,7 +441,7 @@ with tabs[5]:
         with col:
             st.markdown(f"**{city}**")
             st.plotly_chart(charts.break_even_chart(bes[city]), width="stretch", key=f"be_{city}")
-            st.caption(insights.break_even_readout(bes[city]))
+            st.markdown(nested(insights.break_even_insight(bes[city])))
     st.subheader("Revenue per vehicle per month: where it goes")
     cols = st.columns(len(sel_cities))
     for col, city in zip(cols, sel_cities):

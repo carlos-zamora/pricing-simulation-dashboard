@@ -144,7 +144,8 @@ legends truncated in narrow three-column rows (legends sit below the plot at hei
 
 - Work in small tasks: one behaviour per change, tests passing, then stop. Don't refactor unrelated code.
 - Prefer putting logic in `model.py`/`insights.py` with a test, and keeping `app.py` thin.
-- Readouts in `insights.py` return `list[str]` (one finding per string) and are rendered with `bullets()`/`nested()`.
+- Readouts in `insights.py` return `list[str]` (one finding per string). Insights are grouped by city: headline first,
+  then support lines, rendered with `city_block()`/`nested()` in `app.py` on every tab.
 - Keep wording plain: this is read aloud in a team meeting. Show the number next to its interpretation.
 - Don't claim the model is right. Where evidence is thin, say what can't be measured.
 - Git: commit only when asked. Keep commits small and describe the user-visible effect.
