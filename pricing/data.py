@@ -59,12 +59,38 @@ class SimData:
         return self.series("fleet_size", "fleet_size", city)
 
     def net(self, basis: str, city: str, line: str) -> pd.Series:
-        return self.series(f"net_income_{basis}", line, city)
+        """A net income line. 'total' comes from the paste; the per-rented-vehicle ('prv') and
+        per-vehicle-per-month ('pvpm') views are derived from it, so those screens need not be
+        copied. A stored value for a month wins over the derived one."""
+        stored = self.series(f"net_income_{basis}", line, city)
+        if basis == "prv":
+            return stored.combine_first(self._per_rental(city, line))
+        if basis == "pvpm":
+            return stored.combine_first(self._per_vehicle(city, line))
+        return stored
 
     def rentals(self, city: str, daypart: str) -> pd.Series:
         """Rentals = revenue / price (inherits the simulation's rounding of revenue)."""
-        line = f"Revenue from {daypart} Rentals"
-        return self.net("total", city, line) / self.net("prv", city, line)
+        revenue = self.net("total", city, f"Revenue from {daypart} Rentals")
+        return revenue / self.price(city, daypart, "Univ")
+
+    def _per_rental(self, city: str, line: str) -> pd.Series:
+        """Net income line per rented vehicle: revenue lines are the price, the day-period
+        contributions use that day period's rentals, everything else uses all rentals.
+        Within about 0.3% of the simulation's own table (its totals are rounded)."""
+        for dp in DAYPARTS:
+            if line == f"Revenue from {dp} Rentals":
+                return self.price(city, dp, "Univ")
+            if line == f"{dp} Contribution":
+                return self.net("total", city, line) / self.rentals(city, dp)
+        all_rentals = sum(self.rentals(city, dp) for dp in DAYPARTS)
+        return self.net("total", city, line) / all_rentals
+
+    def _per_vehicle(self, city: str, line: str) -> pd.Series:
+        """Net income line per vehicle per month = total / fleet. The fleet is fixed during the
+        simulation, so the last known fleet size carries over to months not yet pasted."""
+        return self.net("total", city, line) / self.fleet(city).ffill().bfill()
+
 
     # -- demand by day period ---------------------------------------------------- #
     def demand(self, city: str, daypart: str) -> pd.Series:

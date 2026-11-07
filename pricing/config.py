@@ -56,10 +56,12 @@ REQUIRED_TABLES = {
     "market_demand": "Market demand",
     "unit_sales": "Unit sales",
     "net_income_total": "Net income - total",
-    "net_income_prv": "Net income - per rented vehicle",
 }
+# Optional: never needed, because the dashboard derives them from the required tables (fleet size
+# is used for the per-vehicle view when it was pasted before).
 OPTIONAL_TABLES = {
     "fleet_size": "Fleet size",
+    "net_income_prv": "Net income - per rented vehicle",
     "net_income_pvpm": "Net income - per vehicle per month",
     "net_income_pct": "Net income - % of revenue",
 }
