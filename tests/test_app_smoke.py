@@ -67,3 +67,20 @@ def test_every_selector_combination_runs(city, daypart):
     finally:
         if not existed and data_file.exists():
             data_file.unlink()
+
+
+def test_reset_button_puts_back_last_months_prices_and_fleets():
+    at = _run()
+    assert not at.exception
+    assert not [b for b in at.button if "Fill with suggested" in b.label]   # auto-populated instead
+    start = [n.value for n in at.number_input]
+    assert len(start) == 6
+    for n in at.number_input:
+        n.set_value(n.value + 5)
+    at.run()
+    assert [n.value for n in at.number_input] != start
+    reset = at.button(key="reset_plan")
+    assert reset.label == "Reset to Oct prices"
+    reset.click().run()
+    assert not at.exception
+    assert [n.value for n in at.number_input] == start   # sample data: suggestion = hold = Oct prices

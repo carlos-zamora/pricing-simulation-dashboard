@@ -9,7 +9,7 @@ from .charts import money
 from .data import SimData
 from .model import Bridge, BreakEven, DemandVsUtil, PriceGuide, PriceVsUtil
 
-GOOD, BAD, INFO = "good", "bad", "info"      # green / red / orange font color in the UI
+GOOD, BAD, INFO = "good", "bad", "info"      # green / red / yellow font color in the UI
 
 
 class Insight(list):
@@ -73,6 +73,30 @@ def profit_insight(b: Bridge) -> Insight:
                f" · variable cost {money(steps['Variable cost / rental'], True)}"
                f" · fixed costs {money(steps['Fixed costs'], True)}")
     return Insight([head, support], GOOD if change > 0 else BAD if change < 0 else INFO)
+
+
+def _colored(text: str, v: float | None) -> str:
+    """Streamlit color directive: green for good, red for bad, yellow for important/neutral."""
+    if v is None or abs(v) < 0.5:
+        return f":yellow[{text}]"
+    return f":{'green' if v > 0 else 'red'}[{text}]"
+
+
+def profit_oneliner(name: str, b: Bridge) -> str:
+    """What moved profit, in one line. Colors: headline green/red by direction, each effect
+    green/red by sign, and the biggest driver in yellow (the important part)."""
+    steps = dict(b.steps[1:-1])
+    drivers = {k: v for k, v in steps.items() if k != "Rounding in source"}
+    top = max(drivers, key=lambda k: abs(drivers[k]))
+    change = b.end - b.start
+    verb = "rose" if change > 0 else "fell" if change < 0 else "was flat"
+    parts = [f"{label.lower()} {_colored(money(steps[key], True), steps[key])}"
+             for label, key in (("Price", "Price effect"), ("volume", "Volume effect"),
+                                ("variable cost", "Variable cost / rental"),
+                                ("fixed costs", "Fixed costs"))]
+    return (f"**{name}:** " + _colored(f"**profit {verb} {money(abs(change))}**", change)
+            + f" vs {b.base} (now {money(b.end)}), mainly from :yellow[{top.lower()}] ("
+            + " · ".join(parts) + ")")
 
 
 def break_even_insight(be: BreakEven) -> Insight:

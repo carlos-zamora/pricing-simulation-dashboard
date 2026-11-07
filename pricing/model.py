@@ -128,11 +128,16 @@ def demand_vs_util(data: SimData) -> dict[tuple[str, str], DemandVsUtil]:
 # Price vs pre-tax profit
 # --------------------------------------------------------------------------- #
 def price_vs_profit(data: SimData, city: str) -> pd.DataFrame:
-    return pd.DataFrame({
-        "Weekday price": data.net("prv", city, "Revenue from Weekday Rentals"),
-        "Weekend price": data.net("prv", city, "Revenue from Weekend Rentals"),
-        "Pre-tax profit": data.net("total", city, "Pre-Tax Profit"),
-    })
+    cols = {}
+    for dp in DAYPARTS:
+        cols[f"{dp} price"] = data.price(city, dp, "Univ")
+        cols[f"{dp} comp price"] = data.price(city, dp, "Comp")
+        cols[f"{dp} utilization"] = data.utilization(city, dp)
+    cols["Pre-tax profit"] = data.net("total", city, "Pre-Tax Profit")
+    cols["Unfilled orders"] = data.market(city, "unfilled")
+    cols["Unfilled share"] = cols["Unfilled orders"] / data.market(city, "demand")
+    cols["Fleet size"] = data.fleet(city)
+    return pd.DataFrame(cols)
 
 
 # --------------------------------------------------------------------------- #

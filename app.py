@@ -54,7 +54,7 @@ def bullets(items) -> str:
     return "\n".join(f"- {i}" for i in items)
 
 
-TONE_COLOR = {insights.GOOD: "green", insights.BAD: "red", insights.INFO: "orange"}
+TONE_COLOR = {insights.GOOD: "green", insights.BAD: "red", insights.INFO: "yellow"}
 
 
 def nested(lines: list[str]) -> str:
@@ -268,10 +268,30 @@ optimistic_segs = segs_by_case[model.CASE_DEMAND_ADJ]
 status = model.status_snapshot(data, latest, prev, segs_by_case)
 
 
-def fill_suggested() -> None:
+def suggested_price(seg: tuple[str, str]) -> float:
+    """The guide's pick for a segment (the current price when it recommends holding)."""
+    g = guides[seg[0]]
+    return float(g.pick_weekday if seg[1] == "Weekday" else g.pick_weekend)
+
+
+def reset_plan() -> None:
+    """Back to last month's prices and fleet sizes (callback: widget state can't be written after
+    the widgets render)."""
+    for seg in SEGMENTS:
+        st.session_state[f"plan_{latest}_{seg}"] = float(status.segments[seg].price)
     for city in CITIES:
-        st.session_state[f"plan_{latest}_{(city, 'Weekday')}"] = float(guides[city].pick_weekday)
-        st.session_state[f"plan_{latest}_{(city, 'Weekend')}"] = float(guides[city].pick_weekend)
+        cap = status.segments[(city, "Weekday")].capacity
+        if cap is not None:
+            st.session_state[f"plan_cap_{latest}_{city}"] = float(cap)
+
+
+# The planner boxes start at the suggested prices. If the suggestion changes (data restated or
+# re-imported), the boxes follow it; otherwise the team's edits stay.
+_sig = tuple(suggested_price(seg) for seg in SEGMENTS)
+if st.session_state.get(f"plan_sig_{latest}") != _sig:
+    st.session_state[f"plan_sig_{latest}"] = _sig
+    for seg, p in zip(SEGMENTS, _sig):
+        st.session_state[f"plan_{latest}_{seg}"] = p
 
 
 def tone(text: str, good: bool | None) -> str:
@@ -293,14 +313,18 @@ def delta_text(v: float, fmt) -> str:
 
 
 next_m = next_month(latest)
-st.markdown(f"**Our prices and capacity for {next_m}**")
+head_l, head_r = st.columns([5, 1], vertical_alignment="center")
+head_l.markdown(f"**Our prices and capacity for {next_m}**",
+                help=f"Prices start at the suggested prices (see the Price planner tab).\n"
+                     f"Reset puts back {latest}'s prices and fleet sizes.")
+head_r.button(f"Reset to {latest} prices", on_click=reset_plan, key="reset_plan", width="stretch")
 prices: dict[tuple[str, str], float] = {}
 fleets: dict[str, float] = {}
 # Row 1: the four prices. Row 2: one fleet size per city, each box as wide as that city's two prices.
 price_cols = st.columns(len(SEGMENTS))
 for col, seg in zip(price_cols, SEGMENTS):
     s, sg = cautious_segs[seg], status.segments[seg]
-    prices[seg] = col.number_input(f"{s.name} ($)", value=float(s.price0), step=1.0,
+    prices[seg] = col.number_input(f"{s.name} ($)", step=1.0,       # value set above via session state
                                    min_value=1.0, key=f"plan_{latest}_{seg}")
     chg = prices[seg] - sg.price
     col.caption(f"{latest}: {charts.price(sg.price)}" + ("" if abs(chg) < 0.005 else
@@ -317,12 +341,26 @@ for col, city in zip(st.columns(len(CITIES)), CITIES):
                 " · " + flag(f"{chg:+,.0f}")))
 scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices, fleets)
         for c in model.CASES}
-lo, hi = sorted(sum(scen[c][ci]["profit"] for ci in CITIES) for c in model.CASES)
-st.caption(f"Expected Florida profit at these prices: {charts.money(lo)} to {charts.money(hi)} "
-           "(cautious to optimistic)",
-           help="Capacity is set per city.\n"
-                "Demand is capped by capacity.\n"
-                "Vehicle inventory cost is charged for each vehicle added or removed.")
+
+
+def expected_range(cities: list[str]) -> str:
+    """Profit range (cautious to optimistic) for these cities, with the change vs last month."""
+    lo, hi = sorted(sum(scen[c][ci]["profit"] for ci in cities) for c in model.CASES)
+    actual = sum(scen[model.CASES[0]][ci]["actual"] for ci in cities)
+    return "  \n".join([
+        f"**{charts.money(lo)} to {charts.money(hi)}**",
+        ":gray[vs " + latest + " " + charts.money(actual) + "] "
+        + delta_text(lo - actual, lambda v: charts.money(v, True)) + " to "
+        + delta_text(hi - actual, lambda v: charts.money(v, True)),
+    ])
+
+
+st.markdown("Expected profit at these prices (cautious to optimistic)",
+            help="Capacity is set per city.\n"
+                 "Demand is capped by capacity.\n"
+                 "Vehicle inventory cost is charged for each vehicle added or removed.")
+for col, (name, cities) in zip(st.columns(3), [("Florida", list(CITIES))] + [(c, [c]) for c in CITIES]):
+    col.markdown(f"**{name}**  \n" + expected_range(cities))
 
 fl_cum = status.florida_cumulative
 st.markdown(
@@ -375,6 +413,12 @@ with tabs[0]:
     if not whole_city:
         st.caption("Pre-tax profit is only reported for a whole city, so with one day period "
                    f"selected the profit figures are that period's contribution ({perf_label.lower()}).")
+    moved = ([insights.profit_oneliner("Florida", model.combine_bridges([bridges[c] for c in sel_cities]))]
+             if multi_city else [])
+    moved += [insights.profit_oneliner(c, bridges[c]) for c in sel_cities]
+    st.markdown("  \n".join(moved),
+                help=f"What moved profit from {prev} to {latest}, for the whole city (both day periods).\n"
+                     "Details are in the Profit bridge tab.")
     st.plotly_chart(charts.scope_profit_chart(perf, perf_label), width="stretch", key="ov_scope")
     cols = st.columns(len(sel_cities))
     for col, city in zip(cols, sel_cities):
@@ -416,40 +460,8 @@ with tabs[1]:
     for city in sel_cities:
         city_block(city, [insights.price_insight(guides[city], data, latest)])
 
-    st.divider()
-    st.subheader(f"Price planner (starting from {latest} actuals)")
-    st.caption("Set the prices in the boxes at the top of the page; the projections below follow them.")
-    st.button("Fill with suggested prices", on_click=fill_suggested)
-
-    def profit_metrics(container, title: str, cities: list[str]) -> None:
-        container.markdown(f"**{title}**")
-        m1, m2 = container.columns(2)
-        for mcol, case in zip((m1, m2), model.CASES):
-            profit = sum(scen[case][c]["profit"] for c in cities)
-            diff = profit - sum(scen[case][c]["actual"] for c in cities)
-            mcol.metric(f"Profit, {model.CASE_LABELS[case].lower()}", charts.money(profit),
-                        charts.money(diff, True) + f" vs {latest}",
-                        delta_color="off" if abs(diff) < 1 else "normal")
-
-    if multi_city:
-        profit_metrics(st, "Florida (Orlando + Miami)", sel_cities)
-    cols = st.columns(len(sel_cities))
-    for col, city in zip(cols, sel_cities):
-        with col:
-            profit_metrics(st, city, [city])
-            rows = []
-            for dp in sel_dayparts:
-                row = {"Segment": dp}
-                for case in model.CASES:
-                    d = scen[case][city]["detail"][dp]
-                    lab = model.CASE_LABELS[case]
-                    row[f"Utilization ({lab.lower()})"] = f"{d['utilization']:.0%}"
-                    row[f"Δ profit ({lab.lower()})"] = charts.money(d["delta"], True)
-                rows.append(row)
-            col.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    if not whole_city:
-        st.caption("Profit totals are for the whole city; the day period not shown stays at its "
-                   f"{latest} price.")
+    st.caption("The boxes at the top of the page start at the suggested prices; the projections "
+               "follow whatever is in them.")
     for seg in sel_segs:
         if (not guides[seg[0]].measurable[seg[1]]
                 and abs(prices[seg] - cautious_segs[seg].price0) >= 0.5):
@@ -482,14 +494,18 @@ with tabs[1]:
 
     st.subheader("Profit by price: one segment at a time")
     st.markdown(bullets([
-        "Each line changes only that segment's price; the orange dot is the current price.",
+        "Cities side by side, day periods stacked. Each line changes only that segment's price; "
+        "the orange dot is the current price.",
         "Where the two lines are far apart, the data can't yet tell price from demand.",
     ]))
-    st.plotly_chart(charts.whatif_lines(segs_by_case, sel_segs), width="stretch", key="wi_lines")
-    st.markdown("**Slopes used** (util pts per +$1 of price, capped at 0)")
-    for city in sel_cities:
-        city_block(city, insights.slope_insight(
-            cautious_segs, optimistic_segs, [(city, dp) for dp in sel_dayparts]))
+    wi_figs = charts.whatif_lines(segs_by_case, sel_segs)
+    for dp in sel_dayparts:
+        for col, city in zip(st.columns(len(sel_cities)), sel_cities):
+            with col:
+                st.markdown(f"**{city} – {dp}**")
+                st.plotly_chart(wi_figs[(city, dp)], width="stretch", key=f"wi_lines_{city}_{dp}")
+                st.markdown(chr(10).join(nested(i) for i in insights.slope_insight(
+                    cautious_segs, optimistic_segs, [(city, dp)])))
 
 # --------------------------------------------------------------------------- #
 # Price vs Utilization

@@ -127,3 +127,33 @@ def test_price_headline_is_capitalised(ctx):
     d, m = ctx["data"], ctx["latest"]
     assert insights.price_insight(ctx["guides"]["Orlando"], d, m)[0].startswith("**Hold current prices.")
     assert insights.price_insight(ctx["guides"]["Miami"], d, m)[0].startswith("**No price recommendation.")
+
+
+def test_profit_oneliner_is_a_single_line_with_the_four_effects(ctx):
+    line = insights.profit_oneliner("Orlando", ctx["bridges"]["Orlando"])
+    assert chr(10) not in line and line.startswith("**Orlando:**")
+    assert all(w in line for w in ("price", "volume", "variable cost", "fixed costs"))
+
+
+def test_whatif_lines_one_figure_per_segment_with_a_line_per_case(ctx):
+    from pricing import charts
+    from pricing.config import SEGMENTS
+    figs = charts.whatif_lines(ctx["segs"], SEGMENTS)
+    assert list(figs) == list(SEGMENTS)
+    cases = lambda k: [t.name for t in figs[k].data if t.name != "Actual price"]
+    assert len(cases(("Orlando", "Weekday"))) == 2
+    assert cases(("Miami", "Weekend")) == []               # unmeasurable: no curve
+
+
+def test_overview_unfilled_orders_axis_starts_at_zero_and_grows_down():
+    import pandas as pd
+    from pricing import charts
+    idx = ["Jul", "Aug"]
+    df = pd.DataFrame({"Weekday price": [40.0, 41.0], "Weekday comp price": [40.0, 40.0],
+                       "Weekday utilization": [.8, .9], "Weekend price": [30.0, 31.0],
+                       "Weekend comp price": [30.0, 30.0], "Weekend utilization": [.7, .8],
+                       "Pre-tax profit": [1e5, 2e5], "Unfilled orders": [0.0, 5e4],
+                       "Unfilled share": [0.0, .1], "Fleet size": [1e3, 1e3]}, index=idx)
+    fig = charts.price_and_profit(df, ("Weekday", "Weekend"))
+    ax = fig.layout[f"yaxis{len(fig.data) and 5}"]
+    assert ax.autorange == "reversed" and ax.rangemode == "tozero"

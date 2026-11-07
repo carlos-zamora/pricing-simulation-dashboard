@@ -46,6 +46,9 @@ pytest tests/test_price_guide.py -q    # one file while iterating
    - No dual axes: use small multiples or indexed series.
    - Legend whenever there are 2+ series; hairline grids; colors from the palette in `charts.py`
      (Univ blue, Comp orange, aqua, magenta), assigned in fixed order. Text never uses the series color.
+   - **Text color = meaning, app-wide:** green = good, red = bad, yellow = important / needs attention
+     (neutral stays uncolored). Streamlit directives (`:green[...]`); helpers `tone()`/`flag()` in `app.py`,
+     `TONE_COLOR` and `insights._colored`. Any new readout, metric or one-liner follows it.
    - Use newlines (bullet lists, `<br>` in Plotly text, line breaks in `help=` tooltips) to separate
      separate insights or values. The user finds dense single paragraphs hard to read.
 6. **Never touch `data/facts.csv`** unless the user asks for that specific change in that message
@@ -147,7 +150,9 @@ Don't make a derivable screen required again: the user has 1-2 minutes per round
   `scenario_profit(..., fleets)` charges vehicle inventory cost per vehicle added/removed. `price_guide` still
   assumes the current fleet (the suggestion ignores the fleet boxes).
 - Planner inputs: row 1 = four prices, row 2 = two fleet boxes (each as wide as that city's two prices). Keys
-  `plan_{latest}_{segment}` and `plan_cap_{latest}_{city}`.
+  `plan_{latest}_{segment}` and `plan_cap_{latest}_{city}`. The price boxes start at the guide's suggested
+  prices (`plan_sig_{latest}` remembers the suggestion and re-fills the boxes only when it changes); a small
+  "Reset to {latest} prices" button beside the heading restores last month's prices and fleets.
 - `st.tabs(..., key="main_tabs")` keeps the open tab across reruns. Without a key, a change in the number of
   banners above the tabs (e.g. "Missing for Nov" after a partial paste) resets to Overview. `AppTest` can't
   check this: verify in the browser.
@@ -230,7 +235,7 @@ Pick one, do it, run `pytest`, stop. "Done when" is the acceptance check.
 - `MONTH_ORDER` starts in July; month sorting must use it, never alphabetical order.
 - Streamlit reruns the whole script on every interaction; `Store` lives in `st.session_state`.
   After import, `finish_import` saves and calls `st.rerun()`.
-- Number-input state for the planner is keyed `plan_{latest}_{segment}`; the "Fill with suggested prices"
+- Number-input state for the planner is keyed `plan_{latest}_{segment}`; the "Reset to {latest} prices"
   button writes to those keys through a callback (writing after the widget renders raises an error).
 - `linfit` returns `None` for undefined slopes (constant x). Callers must handle `None`, not assume a float.
 - Don't assume Orlando and Miami have the same measurable segments; loop over `SEGMENTS`.

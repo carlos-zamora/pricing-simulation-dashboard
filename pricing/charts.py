@@ -166,19 +166,49 @@ def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
 # --------------------------------------------------------------------------- #
 def price_and_profit(df: pd.DataFrame, dayparts=("Weekday", "Weekend"),
                      profit_label: str = "Pre-tax profit") -> go.Figure:
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Univ price ($)", profit_label),
-                        horizontal_spacing=0.12)
-    colors = {"Weekday": BLUE, "Weekend": AQUA}
-    for dp in dayparts:
-        fig.add_trace(_line(df.index, df[f"{dp} price"], dp, colors[dp],
-                            hovertemplate="%{x}: $%{y:.2f}"), 1, 1)
+    """One city, panels stacked so every month lines up vertically: a price panel per day period
+    (Univ vs Comp), utilization, profit, then a short strip for unfilled orders and fleet size.
+    Competitor utilization is not reported, so it is not shown."""
+    dayparts = list(dayparts)
+    has_strip = "Unfilled orders" in df and "Fleet size" in df
+    titles = ([f"{dp} price ($)" for dp in dayparts] + ["Utilization (Univ)", profit_label]
+              + (["Unfilled orders", "Fleet size (vehicles)"] if has_strip else []))
+    heights = [190] * (len(dayparts) + 2) + ([120, 120] if has_strip else [])
+    total = sum(heights)
+    fig = make_subplots(rows=len(titles), cols=1, shared_xaxes=True, subplot_titles=titles,
+                        row_heights=[h / total for h in heights], vertical_spacing=0.035)
+    for i, dp in enumerate(dayparts):
+        r = i + 1
+        fig.add_trace(_line(df.index, df[f"{dp} price"], "Univ", UNIV, legendgroup="Univ",
+                            showlegend=(i == 0), hovertemplate="%{x}: $%{y:.2f}"), r, 1)
+        fig.add_trace(_line(df.index, df[f"{dp} comp price"], "Comp", COMP, legendgroup="Comp",
+                            showlegend=(i == 0), hovertemplate="%{x}: $%{y:.2f}"), r, 1)
+        fig.update_yaxes(tickprefix="$", row=r, col=1)
+    r = len(dayparts) + 1
+    for dp, color in zip(dayparts, (AQUA, MAGENTA)):
+        fig.add_trace(_line(df.index, df[f"{dp} utilization"], dp, color,
+                            hovertemplate="%{x}: %{y:.0%}"), r, 1)
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=r, col=1)
+    r += 1
     fig.add_trace(go.Bar(x=df.index, y=df["Pre-tax profit"], marker_color=BLUE, showlegend=False,
                          customdata=[money(v) for v in df["Pre-tax profit"]],
-                         hovertemplate="%{x}: %{customdata}<extra></extra>"), 1, 2)
-    fig.update_yaxes(tickprefix="$", row=1, col=1)
-    fig.update_yaxes(tickformat="$~s", row=1, col=2)
+                         hovertemplate="%{x}: %{customdata}<extra></extra>"), r, 1)
+    fig.update_yaxes(tickformat="$~s", row=r, col=1)
+    if has_strip:
+        r += 1
+        fig.add_trace(go.Bar(x=df.index, y=df["Unfilled orders"], marker_color=ORANGE, showlegend=False,
+                             customdata=df["Unfilled share"],
+                             hovertemplate="%{x}: %{y:,.0f} unfilled (%{customdata:.1%} of demand)"
+                                           "<extra></extra>"), r, 1)
+        fig.update_yaxes(tickformat="~s", autorange="reversed", rangemode="tozero", row=r, col=1)
+        r += 1
+        fig.add_trace(_line(df.index, df["Fleet size"], "Fleet", AQUA, showlegend=False,
+                            hovertemplate="%{x}: %{y:,.0f} vehicles"), r, 1)
+        fig.update_yaxes(tickformat="~s", row=r, col=1)
     fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 300)
+    fig = _style(fig, total + 90)
+    fig.update_layout(margin=dict(t=50), legend=dict(y=1.0, yanchor="bottom"))
+    return fig
 
 
 def scope_profit_chart(df: pd.DataFrame, label: str) -> go.Figure:
@@ -219,56 +249,45 @@ def bridge_chart(b: Bridge) -> go.Figure:
 
 
 def whatif_lines(segs_by_case: dict[str, dict[tuple[str, str], WhatIfSegment]],
-                 segments: list[tuple[str, str]] | None = None) -> go.Figure:
-    """Change in profit vs actual as one segment's price moves; one line per assumption."""
+                 segments: list[tuple[str, str]] | None = None) -> dict[tuple[str, str], go.Figure]:
+    """One figure per segment (city, day period): change in profit vs actual as that segment's
+    price moves, one line per sensitivity assumption. The other prices stay put."""
     first_case = next(iter(segs_by_case.values()))
     keys = list(segments) if segments else list(first_case)
-    ncols = min(2, len(keys))
-    nrows = -(-len(keys) // ncols)
-    fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[first_case[k].name for k in keys],
-                        vertical_spacing=0.2, horizontal_spacing=0.1)
     colors = {case: c for case, c in zip(segs_by_case, (BLUE, AQUA))}
-    for i, seg_key in enumerate(keys):
-        r, c = divmod(i, ncols)
-        measurable = segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0
-        if not measurable:
-            fig.add_annotation(
-                text="Price sensitivity can't be measured<br>yet, so no curve is drawn",
-                xref="x domain" if i == 0 else f"x{i + 1} domain",
-                yref="y domain" if i == 0 else f"y{i + 1} domain",
-                x=0.5, y=0.75, showarrow=False, font=dict(size=12, color=INK))
-        for case, segs in segs_by_case.items():
-            if not measurable:
-                break
-            seg = segs[seg_key]
-            cv = whatif_curve(seg)
-            fig.add_trace(go.Scatter(
-                x=cv["price"], y=cv["delta_profit"], mode="lines+markers",
-                line=dict(color=colors[case], width=2), marker=dict(size=8, color=colors[case]),
-                name=CASE_LABELS[case], legendgroup=case, showlegend=(i == 0),
-                customdata=np.c_[cv["utilization"], cv["rentals"]],
-                hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
-                              "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}"
-                              f"<extra>{CASE_LABELS[case]}</extra>"), r + 1, c + 1)
-        fig.add_trace(go.Scatter(x=[first_case[seg_key].price0], y=[0], mode="markers",
-                                 name="Actual price",
+    figs = {}
+    for key in keys:
+        fig = go.Figure()
+        measurable = segs_by_case[CASE_GAP_ONLY][key].slope_used < 0
+        p0 = first_case[key].price0
+        if measurable:
+            for case, segs in segs_by_case.items():
+                cv = whatif_curve(segs[key])
+                fig.add_trace(go.Scatter(
+                    x=cv["price"], y=cv["delta_profit"], mode="lines+markers",
+                    line=dict(color=colors[case], width=2), marker=dict(size=8, color=colors[case]),
+                    name=CASE_LABELS[case],
+                    customdata=np.c_[cv["utilization"], cv["rentals"]],
+                    hovertemplate="Price $%{x:.0f}<br>Δ profit %{y:$,.0f}<br>"
+                                  "Util %{customdata[0]:.0%}<br>Rentals %{customdata[1]:,.0f}"
+                                  f"<extra>{CASE_LABELS[case]}</extra>"))
+        else:
+            fig.add_annotation(text="Price sensitivity can't be measured<br>yet, so no curve is drawn",
+                               xref="paper", yref="paper", x=0.5, y=0.75, showarrow=False,
+                               font=dict(size=12, color=INK))
+            fig.update_yaxes(range=[-1, 1], showticklabels=False)
+            fig.update_xaxes(range=[p0 - 3, p0 + 3], tickvals=[p0], ticktext=[f"${p0:.0f}"])
+        fig.add_trace(go.Scatter(x=[p0], y=[0], mode="markers", name="Actual price",
                                  marker=dict(size=12, color=ORANGE, line=dict(color="white", width=2)),
-                                 showlegend=(i == 0), hoverinfo="skip"), r + 1, c + 1)
-        fig.add_hline(y=0, line=dict(color=INK, width=1), row=r + 1, col=c + 1)
-    fig.update_yaxes(tickformat="$~s", title_text="Δ profit vs actual")
-    fig.update_xaxes(tickprefix="$")
-    # Panels with no curve: a fixed, tick-free frame around the single actual-price dot
-    # (otherwise the axes autoscale to a tiny range and show meaningless ticks).
-    for i, seg_key in enumerate(keys):
-        if segs_by_case[CASE_GAP_ONLY][seg_key].slope_used < 0:
-            continue
-        r, c = divmod(i, ncols)
-        p0 = first_case[seg_key].price0
-        fig.update_yaxes(range=[-1, 1], showticklabels=False, title_text="",
-                         row=r + 1, col=c + 1)
-        fig.update_xaxes(range=[p0 - 3, p0 + 3], tickvals=[p0], ticktext=[f"${p0:.0f}"], row=r + 1, col=c + 1)
-    fig.update_annotations(font=dict(size=12, color=INK))
-    return _style(fig, 330 if nrows == 1 else 580)
+                                 hoverinfo="skip"))
+        fig.add_hline(y=0, line=dict(color=INK, width=1))
+        fig.update_xaxes(tickprefix="$" if measurable else "")
+        if measurable:
+            fig.update_yaxes(tickformat="$~s", title_text="Δ profit vs actual")
+        _style(fig, 330)
+        fig.update_layout(margin=dict(t=50))
+        figs[key] = fig
+    return figs
 
 
 def whatif_heatmap(g: WhatIfGrid) -> go.Figure:
