@@ -54,14 +54,14 @@ def bullets(items) -> str:
     return "\n".join(f"- {i}" for i in items)
 
 
-TONE_COLOR = {insights.GOOD: "green", insights.BAD: "red", insights.INFO: "yellow"}
+TONE_COLOR = {insights.GOOD: "green", insights.BAD: "red", insights.INFO: "orange"}
 
 
 def nested(lines: list[str]) -> str:
-    """First line as a bullet, highlighted by tone (green good news, red bad news, yellow other),
+    """First line as a bullet, in a font color by tone (green good news, red bad news, orange other),
     with the rest as sub-bullets beneath it."""
     color = TONE_COLOR[getattr(lines, "tone", insights.INFO)]
-    return "\n".join([f"- :{color}-background[{lines[0]}]", *(f"    - {l}" for l in lines[1:])])
+    return "\n".join([f"- :{color}[{lines[0]}]", *(f"    - {l}" for l in lines[1:])])
 
 
 def city_block(name: str, items: list[list[str]]) -> None:

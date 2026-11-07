@@ -9,7 +9,7 @@ from .charts import money
 from .data import SimData
 from .model import Bridge, BreakEven, DemandVsUtil, PriceGuide, PriceVsUtil
 
-GOOD, BAD, INFO = "good", "bad", "info"      # green / red / yellow highlight in the UI
+GOOD, BAD, INFO = "good", "bad", "info"      # green / red / orange font color in the UI
 
 
 class Insight(list):
