@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import CITIES, DAYPARTS, SEGMENTS
+from .config import CITIES, DAYPARTS, MONTH_ORDER, SEGMENTS
 from .data import SimData
 
 CASE_GAP_ONLY = "Gap-only (upper bound)"
@@ -246,6 +246,87 @@ def whatif_segments(data: SimData, month: str, case: str,
         seg.slope_used = 0.0 if chosen is None else min(0.0, chosen)
         out[(city, dp)] = seg
     return out
+
+
+@dataclass
+class SegmentStatus:
+    """Last month's numbers for one city x day period (the always-visible status strip)."""
+    city: str
+    daypart: str
+    utilization: float
+    utilization_prev: float
+    capacity: float | None          # city fleet size (shared by both day periods)
+    price: float
+    price_prev: float
+    comp_price: float
+    slope_cautious: float | None    # util points per +$1; None = unmeasurable
+    slope_optimistic: float | None
+    contribution: float             # day-period contribution (pre-tax is only per city)
+    contribution_prev: float
+
+    @property
+    def elasticity_range(self) -> tuple[float, float] | None:
+        """(low, high) of the utilization-points-per-+$1 slope across the two assumptions,
+        each capped at 0. None when price sensitivity can't be measured."""
+        if self.slope_cautious is None or self.slope_cautious >= 0:
+            return None
+        vals = [min(0.0, v) for v in (self.slope_cautious, self.slope_optimistic) if v is not None]
+        return min(vals), max(vals)
+
+    @property
+    def gap(self) -> float:
+        return self.price - self.comp_price
+
+    @property
+    def at_capacity(self) -> bool:
+        return self.utilization >= 0.99
+
+
+@dataclass
+class Status:
+    month: str
+    segments: dict[tuple[str, str], SegmentStatus]
+    city_profit: dict[str, float]
+    florida_profit: float
+    florida_delta: float               # vs the previous month (0 if that month was not played)
+    florida_cumulative: float | None   # pre-tax profit summed from `since` on; None if not in data
+    since: str
+
+
+def status_snapshot(data: SimData, month: str, prev: str, segs_by_case: dict,
+                    since: str = "Oct", played: list[str] | None = None) -> Status:
+    """`played`: months that really were played (default all). Profit and loss only counts
+    those: if the latest month is not played (e.g. the bundled sample), every profit figure is
+    $0, and a change vs a month that was not played is $0."""
+    played_set = set(data.months if played is None else played)
+    live, prev_live = month in played_set, prev in played_set
+    def contribution(city: str, dp: str, m: str) -> float:
+        return float(data.net("total", city, f"{dp} Contribution")[m]) if m in played_set else 0.0
+
+    segments = {}
+    for city, dp in SEGMENTS:
+        cautious = segs_by_case[CASE_GAP_ONLY][(city, dp)]
+        optimistic = segs_by_case[CASE_DEMAND_ADJ][(city, dp)]
+        fleet = data.fleet(city)[month]
+        util = data.utilization(city, dp)
+        price = data.price(city, dp, "Univ")
+        now = contribution(city, dp, month)
+        segments[(city, dp)] = SegmentStatus(
+            city, dp, float(util[month]), float(util[prev]),
+            None if pd.isna(fleet) else float(fleet),
+            float(price[month]), float(price[prev]),
+            float(data.price(city, dp, "Comp")[month]),
+            cautious.slope_gap_only, optimistic.slope_demand_adj,
+            now, contribution(city, dp, prev) if prev_live else now)
+    pretax = pd.DataFrame({c: data.net("total", c, "Pre-Tax Profit") for c in CITIES})
+    pretax = pretax.mul(pretax.index.isin(played_set), axis=0)   # unplayed months count as $0
+    florida = pretax.sum(axis=1)
+    since_idx = MONTH_ORDER.index(since)
+    counted = [m for m in data.months if MONTH_ORDER.index(m) >= since_idx]
+    delta = float(florida[month] - florida[prev]) if prev_live else 0.0
+    return Status(month, segments, {c: float(pretax[c][month]) for c in CITIES},
+                  float(florida[month]), delta,
+                  float(florida[counted].sum()) if counted else None, since)
 
 
 DEFAULT_DELTAS = [-6, -4, -2, 0, 2, 4, 6]

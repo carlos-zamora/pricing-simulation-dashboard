@@ -1,0 +1,13 @@
+Month	July	August	September	October
+Revenue from Weekday Rentals	75.5%	75.4%	76.4%	75.7%
+Revenue from Weekend Rentals	24.5%	24.6%	23.6%	24.3%
+Total Revenue	100.0%	100.0%	100.0%	100.0%
+Variable Costs	35.1%	35.1%	35.0%	38.4%
+Weighted Average Gross Profit Contribution	64.9%	64.9%	65.0%	61.6%
+Weekday Contribution	66.7%	66.7%	66.7%	63.4%
+Weekend Contribution	59.5%	59.5%	59.5%	55.9%
+Vehicle Inventory Costs	32.8%	35.1%	35.0%	32.1%
+Operating Profit Contribution	32.1%	29.8%	29.9%	29.5%
+Other Fixed Costs	21.1%	22.6%	22.5%	20.6%
+Pre-Tax Profit	11.1%	7.2%	7.4%	8.9%
+Accumulated Pre-Tax Profit	0.0%	0.0%	0.0%	0.0%

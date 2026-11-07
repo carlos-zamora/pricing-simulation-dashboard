@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +23,31 @@ class ImportReport:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)       # net income texts still needing a city
+
+
+@lru_cache(maxsize=4)
+def _sample_facts(sample_dir: str) -> pd.DataFrame:
+    store = Store(Path(sample_dir) / "__never_saved__.csv")
+    store.add_folder(sample_dir)
+    return store.facts
+
+
+def sample_months(facts: pd.DataFrame, sample_dir: str | Path) -> list[str]:
+    """Months in `facts` that are just the bundled sample (every value identical to it).
+
+    A real game month never matches, so these are months that were not actually played."""
+    sample_dir = Path(sample_dir)
+    if facts.empty or not sample_dir.exists():
+        return []
+    sample_facts = _sample_facts(str(sample_dir))
+    cols = [*KEY]
+
+    def rows(df: pd.DataFrame, month: str) -> set:
+        part = df[df["month"] == month]
+        return set(zip(*(part[c] for c in cols), part["value"].round(6)))
+
+    return [m for m in facts["month"].unique()
+            if rows(sample_facts, m) and rows(facts, m) <= rows(sample_facts, m)]
 
 
 def empty_facts() -> pd.DataFrame:

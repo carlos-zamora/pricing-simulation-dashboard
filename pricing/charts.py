@@ -21,6 +21,14 @@ UNIV, COMP = BLUE, ORANGE
 SEQ_BLUE = [[0, "#cde2fb"], [0.35, "#6da7ec"], [0.7, "#256abf"], [1, "#0d366b"]]
 
 
+def price(x: float, signed: bool = False) -> str:
+    """A per-vehicle price: whole dollars when whole ($41), else cents ($35.50). Signed for deltas
+    (+$1, -$1.50). The Univ-Comp gap is always shown as our price minus the competitor's."""
+    sign = ("+" if x > 0 else "-" if x < 0 else "") if signed else ""
+    x = abs(x) if signed else x
+    return f"{sign}${x:,.0f}" if abs(x - round(x)) < 0.005 else f"{sign}${x:,.2f}"
+
+
 def money(x: float, signed: bool = False) -> str:
     sign = "+" if signed and x > 0 else ""
     if abs(x) >= 1e6:
@@ -121,7 +129,7 @@ def util_vs_demand(d: DemandVsUtil) -> go.Figure:
 
 def price_effect_after_demand(d: DemandVsUtil) -> go.Figure:
     t = d.table
-    labels = [f"{m} ({g:+.0f})" for m, g in zip(t.index, t["gap"])]
+    labels = [f"{m} ({price(g, True)})" for m, g in zip(t.index, t["gap"])]
     return scatter_with_fit(t["gap"], t["residual"] * 100, labels, "Univ – Comp price gap ($)",
                             "Utilization vs demand trend (pts)", ytick=".1f",
                             slope_scale=1, slope_unit="util pts per +$1 gap", color=ORANGE)

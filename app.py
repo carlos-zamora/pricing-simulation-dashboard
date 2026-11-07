@@ -9,10 +9,10 @@ import streamlit as st
 
 from pricing import charts, insights, model
 from pricing.config import (CITIES, CITY_OPTIONS, COPY_LIST, DAYPART_OPTIONS, DAYPARTS,
-                            SEGMENTS, item_name, scope)
+                            SEGMENTS, item_name, next_month, scope)
 from pricing.data import SimData
 from pricing.parsers import guess_city_from_name
-from pricing.store import ImportReport, Store
+from pricing.store import ImportReport, Store, sample_months
 
 ROOT = Path(__file__).parent
 DATA_FILE = Path(os.environ.get("PRICING_SIM_DATA") or ROOT / "data" / "facts.csv")
@@ -233,6 +233,81 @@ ue = model.unit_economics(data)
 contrib = model.weekday_weekend_contribution(data)
 dem_readouts = insights.demand_readouts(data, dvu)
 
+# --------------------------------------------------------------------------- #
+# Always-visible header: price stance + last month's status (every tab, every view)
+# --------------------------------------------------------------------------- #
+cautious_segs = segs_by_case[model.CASE_GAP_ONLY]
+optimistic_segs = segs_by_case[model.CASE_DEMAND_ADJ]
+sample_ms = sample_months(store.facts, SAMPLE_DIR)
+played_ms = [m for m in data.months if m not in sample_ms]
+status = model.status_snapshot(data, latest, prev, segs_by_case, played=played_ms)
+
+
+def fill_suggested() -> None:
+    for city in CITIES:
+        st.session_state[f"plan_{latest}_{(city, 'Weekday')}"] = float(guides[city].pick_weekday)
+        st.session_state[f"plan_{latest}_{(city, 'Weekend')}"] = float(guides[city].pick_weekend)
+
+
+def tone(text: str, good: bool | None) -> str:
+    """Green = good, red = bad, none = neutral."""
+    return text if good is None else f":{'green' if good else 'red'}[{text}]"
+
+
+def flag(text: str) -> str:
+    return f":yellow[{text}]"                      # yellow = important, needs attention
+
+
+def delta_text(v: float, fmt) -> str:
+    return "(" + tone(fmt(v), None if abs(v) < 0.5 else v > 0) + ")"
+
+
+next_m = next_month(latest)
+st.markdown(f"**Our prices for {next_m}**")
+prices: dict[tuple[str, str], float] = {}
+for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
+    s, sg = cautious_segs[seg], status.segments[seg]
+    prices[seg] = col.number_input(f"{s.name} ($)", value=float(s.price0), step=1.0, min_value=1.0,
+                                   key=f"plan_{latest}_{seg}")
+    chg = prices[seg] - sg.price
+    col.caption(f"{latest}: {charts.price(sg.price)}" + ("" if abs(chg) < 0.005 else
+                " · " + flag(f"{charts.price(chg, True)} change")))
+scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices) for c in model.CASES}
+lo, hi = sorted(sum(scen[c][ci]["profit"] for ci in CITIES) for c in model.CASES)
+st.caption(f"Expected Florida profit at these prices: {charts.money(lo)} to {charts.money(hi)} "
+           "(cautious to optimistic)")
+
+fl_cum = status.florida_cumulative
+st.markdown(
+    f"**Last month: {latest}** · Florida profit/loss "
+    f"**{tone(charts.money(status.florida_profit), status.florida_profit > 0)}** "
+    + delta_text(status.florida_delta, lambda v: charts.money(v, True))
+    + f" · Total since {status.since}: "
+    + ("n/a" if fl_cum is None else f"**{tone(charts.money(fl_cum), fl_cum > 0)}**")
+    + " · " + " · ".join(f"{c} {charts.money(v)}" for c, v in status.city_profit.items()))
+if latest in sample_ms:
+    st.caption("Sample data: no game month played yet, so profit/loss shows $0 until you paste one.")
+for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
+    sg = status.segments[seg]
+    rng = sg.elasticity_range
+    du = (sg.utilization - sg.utilization_prev) * 100
+    dc = sg.contribution - sg.contribution_prev
+    util_good = None if sg.at_capacity else sg.utilization >= 0.8
+    with col.container(border=True):
+        st.markdown("  \n".join([
+            f"**{seg[0]} – {seg[1]}**" + ("  " + flag("⚠ at capacity") if sg.at_capacity else ""),
+            f"Profit **{tone(charts.money(sg.contribution), sg.contribution > 0)}** "
+            + delta_text(dc, lambda v: charts.money(v, True)),
+            f"Price **{charts.price(sg.price)}** · :gray[comp {charts.price(sg.comp_price)}] "
+            f"({tone(charts.price(sg.gap, True), None if abs(sg.gap) < 0.005 else sg.gap < 0)})",
+            f"Utilization **{tone(f'{sg.utilization:.0%}', util_good)}** "
+            + delta_text(du, lambda v: f"{v:+.0f} pts"),
+            ":gray[Capacity " + (f"{sg.capacity:,.0f}]" if sg.capacity else "n/a]"),
+            ":gray[Elasticity (pts per +$1)] " + (
+                flag("not measurable") if rng is None else f":gray[{rng[0]:.1f} to {rng[1]:.1f}]"),
+        ]))
+st.divider()
+
 tabs = st.tabs(["Overview", "Price planner", "Price vs Utilization", "Demand vs Utilization",
                 "Profit bridge", "Break-even & economics", "Import & data"])
 
@@ -276,8 +351,6 @@ with tabs[0]:
 # Price planner
 # --------------------------------------------------------------------------- #
 with tabs[1]:
-    cautious_segs = segs_by_case[model.CASE_GAP_ONLY]
-    optimistic_segs = segs_by_case[model.CASE_DEMAND_ADJ]
     st.subheader("Suggested prices")
     st.markdown(bullets([
         "Every projection is shown under **two assumptions** about how much utilization drops "
@@ -291,25 +364,10 @@ with tabs[1]:
     for city in sel_cities:
         city_block(city, [insights.price_insight(guides[city], data, latest)])
 
-    def fill_suggested() -> None:
-        for city in CITIES:
-            st.session_state[f"plan_{latest}_{(city, 'Weekday')}"] = float(guides[city].pick_weekday)
-            st.session_state[f"plan_{latest}_{(city, 'Weekend')}"] = float(guides[city].pick_weekend)
-
     st.divider()
     st.subheader(f"Price planner (starting from {latest} actuals)")
+    st.caption("Set the prices in the boxes at the top of the page; the projections below follow them.")
     st.button("Fill with suggested prices", on_click=fill_suggested)
-    # Segments outside the current view keep their actual price, so every projection stays whole.
-    prices: dict[tuple[str, str], float] = {seg: float(cautious_segs[seg].price0) for seg in SEGMENTS}
-    cols = st.columns(len(sel_segs))
-    for col, seg in zip(cols, sel_segs):
-        s = cautious_segs[seg]
-        comp = data.price(seg[0], seg[1], "Comp")[latest]
-        prices[seg] = col.number_input(
-            f"{s.name} ($)", value=float(s.price0), step=1.0, min_value=1.0,
-            key=f"plan_{latest}_{seg}")
-        col.caption(f"actual ${s.price0:.0f} · Comp ${comp:.0f} · util {s.util0:.0%}")
-    scen = {c: model.scenario_profit(data, latest, segs_by_case[c], prices) for c in model.CASES}
 
     def profit_metrics(container, title: str, cities: list[str]) -> None:
         container.markdown(f"**{title}**")

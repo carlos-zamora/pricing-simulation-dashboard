@@ -5,6 +5,11 @@ from __future__ import annotations
 MONTH_ORDER = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
                "Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 
+def next_month(month: str) -> str:
+    """The month after `month` in simulation order (Jun wraps to Jul)."""
+    return MONTH_ORDER[(MONTH_ORDER.index(month) + 1) % len(MONTH_ORDER)]
+
+
 CITIES = ["Orlando", "Miami"]          # cities we analyse (Florida = both combined)
 DAYPARTS = ["Weekday", "Weekend"]
 SEGMENTS = [(c, d) for c in CITIES for d in DAYPARTS]
