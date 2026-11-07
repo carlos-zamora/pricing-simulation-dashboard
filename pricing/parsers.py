@@ -6,7 +6,8 @@ one shape is what lets a new month be appended without touching any formulas.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 
 import pandas as pd
 
@@ -170,20 +171,27 @@ class Parsed:
     kind: str                      # e.g. 'price', 'net_income'
     table: str                     # store table name, e.g. 'net_income_total'
     facts: pd.DataFrame
-    city: str | None = None        # only for net income
+    city: str | None = None        # only for net income (None = not known yet)
     warnings: list[str] = field(default_factory=list)
+
+    def with_city(self, city: str) -> "Parsed":
+        """Copy of a net income table once its city is known."""
+        return replace(self, city=city, facts=self.facts.assign(city=city))
 
     @property
     def months(self) -> list[str]:
         return [m for m in MONTH_ORDER if m in set(self.facts["month"])]
 
 
-def parse_text(text: str, city: str | None = None, basis: str | None = None) -> Parsed:
-    """Parse one pasted table. ``city`` is required for net-income screens."""
+def parse_text(text: str, city: str | None = None, basis: str | None = None,
+               defer_city: bool = False) -> Parsed:
+    """Parse one pasted table. ``city`` is required for net-income screens, unless
+    ``defer_city`` is set: the table is then returned with ``city=None`` (and blank city
+    in its facts) for the caller to fill in with ``Parsed.with_city``."""
     grid = read_grid(text)
     kind = detect_kind(grid)
     if kind == "net_income":
-        return _parse_net_income(grid, city, basis)
+        return _parse_net_income(grid, city, basis, defer_city)
 
     hdr = _month_row(grid)
     stacked = [_ffill(r) for r in grid[:hdr]]
@@ -208,10 +216,12 @@ def parse_text(text: str, city: str | None = None, basis: str | None = None) -> 
     return Parsed(kind=kind, table=kind, facts=pd.DataFrame(rows, columns=FACT_COLUMNS))
 
 
-def _parse_net_income(grid: list[list[str]], city: str | None, basis: str | None) -> Parsed:
-    if not city:
+def _parse_net_income(grid: list[list[str]], city: str | None, basis: str | None,
+                      defer_city: bool = False) -> Parsed:
+    if not city and not defer_city:
         raise ParseError("Net income screens do not say which city they belong to. "
                          "Choose Orlando or Miami.")
+    city = city or ""
     basis = basis or detect_net_income_basis(grid)
     months = [normalize_month(c) for c in grid[0][1:] if c.strip()]
     rows: list[dict] = []
@@ -231,7 +241,60 @@ def _parse_net_income(grid: list[list[str]], city: str | None, basis: str | None
     if not rows:
         raise ParseError("The net income table has no data rows")
     return Parsed(kind="net_income", table=f"net_income_{basis}",
-                  facts=pd.DataFrame(rows, columns=FACT_COLUMNS), city=city, warnings=warnings)
+                  facts=pd.DataFrame(rows, columns=FACT_COLUMNS), city=city or None,
+                  warnings=warnings)
+
+
+# --------------------------------------------------------------------------- #
+# Several tables in one paste
+# --------------------------------------------------------------------------- #
+_CITY_NAMES = {"Orlando", "Miami", "Florida"}
+_MONTH_NAME = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+_TAB = "\t"
+
+
+def _split_glued_header(line: str) -> tuple[str, str] | None:
+    """A copied table has no final newline, so the next paste can start on the same line:
+    the end of one table plus a city header row reads as one long row.
+    Returns (end of the previous table, the city header row) when that happened."""
+    cells = line.split(_TAB)
+    for j in range(1, len(cells)):
+        if cells[j].strip() in _CITY_NAMES and all(c.strip() in _CITY_NAMES | {""} for c in cells[j:]):
+            if any(c.strip() for c in cells[:j]):
+                return _TAB.join(cells[:j]), _TAB.join([""] + cells[j:])
+            return None
+    return None
+
+
+def _starts_table(line: str) -> bool:
+    cells = [c.strip() for c in line.split(_TAB)]
+    if cells[0] == "":      # city header row of price / sales / demand / fleet / utilization
+        return any(c in _CITY_NAMES for c in cells) and all(c in _CITY_NAMES | {""} for c in cells)
+    # net income screens open with 'Month  July  August ...'
+    return cells[0] == "Month" and len(cells) > 1 and re.fullmatch(_MONTH_NAME, cells[1]) is not None
+
+
+def split_tables(text: str) -> list[str]:
+    """Cut one paste that holds several tables into one text per table (any order).
+
+    Tables may be separated by blank lines, a plain newline, or nothing at all (the simulation
+    copies no trailing newline). A paste holding a single table comes back unchanged.
+    """
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    # A net income table glued onto the previous one: '...$0.00Month<TAB>July<TAB>...'
+    t = re.sub(r"(?<=[^\n])Month(?=\t" + _MONTH_NAME + r"(?:\t|\n|$))", "\nMonth", t)
+    lines: list[str] = []
+    for line in t.split("\n"):
+        glued = _split_glued_header(line)
+        lines += list(glued) if glued else [line]
+    starts = [i for i, l in enumerate(lines) if _starts_table(l)]
+    if not starts:
+        return [text]
+    first = next((i for i, l in enumerate(lines) if l.strip()), 0)
+    if first < starts[0]:           # unrecognised text before the first table: keep it visible
+        starts.insert(0, first)
+    bounds = starts + [len(lines)]
+    return ["\n".join(lines[a:b]).strip("\n") for a, b in zip(bounds, bounds[1:])]
 
 
 def guess_city_from_name(name: str) -> str | None:
