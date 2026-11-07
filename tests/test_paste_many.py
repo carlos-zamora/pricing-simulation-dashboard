@@ -122,3 +122,14 @@ def test_required_six_are_enough_in_any_order(tmp_path):
         ni = store.facts[store.facts["table"].str.startswith("net_income")]
         assert set(zip(ni["table"], ni["city"])) == {("net_income_total", "Orlando"),
                                                      ("net_income_total", "Miami")}
+
+
+def test_city_detection_when_the_paste_repeats_stored_months(tmp_path):
+    """Every round re-pastes the full history, so stored months and pasted months overlap."""
+    store = Store(tmp_path / "f.csv")
+    store.add_pasted("".join(_raw(SAMPLES / f"{n}.txt") for n in
+                             ["price_history", "unit_sales"]))
+    rep = store.add_pasted("".join(_raw(SAMPLES / f"{n}.txt") for n in
+                                   ["price_history", "unit_sales", "net_income_total-miami"]))
+    assert not rep.errors and not rep.unresolved
+    assert set(store.facts[store.facts["table"] == "net_income_total"]["city"]) == {"Miami"}

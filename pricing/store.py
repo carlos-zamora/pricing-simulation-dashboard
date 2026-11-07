@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import ALL_TABLES, MONTH_ORDER, REQUIRED_TABLES, CITIES
+from .config import ALL_TABLES, CITIES, COPY_LIST, MONTH_ORDER, item_name
 from .parsers import (FACT_COLUMNS, Parsed, ParseError, guess_city_from_name, parse_text,
                       split_tables)
 
@@ -152,8 +152,11 @@ class Store:
                 parsed.append((block, parse_text(block, city=city, defer_city=True)))
             except ParseError as exc:
                 report.errors.append(f"{label} {i}: {exc}")
-        reference = pd.concat([self.facts] + [p.facts for _, p in parsed
-                                              if p.kind != "net_income"], ignore_index=True)
+        # Prices and unit sales to match net income against: stored ones plus this paste's
+        # (which repeat earlier months; the pasted value wins).
+        reference = (pd.concat([self.facts] + [p.facts for _, p in parsed
+                                               if p.kind != "net_income"], ignore_index=True)
+                       .drop_duplicates(KEY, keep="last"))
         for i, (block, p) in enumerate(parsed, 1):
             note = ""
             if p.kind == "net_income" and p.city is None:
@@ -194,27 +197,23 @@ class Store:
         cov = cov.reindex([m for m in MONTH_ORDER if m in cov.index])
         return cov
 
+    def missing(self, month: str) -> list[str]:
+        """What is still needed before ``month`` can be analysed (empty = complete)."""
+        f = self.facts[self.facts["month"] == month]
+        out = []
+        for table, city, _, _ in COPY_LIST:
+            sub = f[f["table"] == table]
+            if city:
+                sub = sub[sub["city"] == city]
+            if sub.empty:
+                out.append(item_name(table, city))
+        return out
+
     def complete_months(self) -> list[str]:
         """Months that have every required table (net income for both cities)."""
-        needed = []
-        for t in REQUIRED_TABLES:
-            if t.startswith("net_income"):
-                needed += [f"{t}|{c}" for c in CITIES]
-            else:
-                needed.append(t)
-        f = self.facts
-        out = []
-        for m in self.months():
-            fm = f[f["month"] == m]
-            ok = True
-            for n in needed:
-                t, _, c = n.partition("|")
-                sub = fm[fm["table"] == t]
-                if c:
-                    sub = sub[sub["city"] == c]
-                if sub.empty:
-                    ok = False
-                    break
-            if ok:
-                out.append(m)
-        return out
+        return [m for m in self.months() if not self.missing(m)]
+
+    def newest_month(self) -> str | None:
+        """The latest month any table mentions (it may still be incomplete)."""
+        months = self.months()
+        return months[-1] if months else None

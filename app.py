@@ -1,20 +1,21 @@
 """Pricing Simulation Dashboard.   Run:  streamlit run app.py"""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from pricing import charts, insights, model
-from pricing.config import (ALL_TABLES, CITIES, CITY_OPTIONS, DAYPART_OPTIONS, DAYPARTS,
-                            REQUIRED_TABLES, SEGMENTS, scope)
+from pricing.config import (CITIES, CITY_OPTIONS, COPY_LIST, DAYPART_OPTIONS, DAYPARTS,
+                            SEGMENTS, item_name, scope)
 from pricing.data import SimData
-from pricing.parsers import ParseError, detect_kind, guess_city_from_name, parse_text, read_grid
+from pricing.parsers import guess_city_from_name
 from pricing.store import ImportReport, Store
 
 ROOT = Path(__file__).parent
-DATA_FILE = ROOT / "data" / "facts.csv"
+DATA_FILE = Path(os.environ.get("PRICING_SIM_DATA") or ROOT / "data" / "facts.csv")
 SAMPLE_DIR = ROOT / "sample_data"
 
 st.set_page_config(page_title="Pricing Simulation Dashboard", page_icon="📊", layout="wide")
@@ -83,54 +84,84 @@ store = get_store()
 # --------------------------------------------------------------------------- #
 # Data tab (defined first so an empty dataset can still import)
 # --------------------------------------------------------------------------- #
+def import_pasted() -> None:
+    """text_area callback: import everything in the box, then empty it (re-importing is safe)."""
+    st_store: Store = st.session_state["store"]
+    text = st.session_state.get("paste_text", "")
+    if not text.strip():
+        return
+    rep = st_store.add_pasted(text)
+    if rep.imported:
+        st_store.save()
+        st.session_state["paste_text"] = ""          # keep the text only if nothing was usable
+    st.session_state["pending_city"] = rep.unresolved
+    st.session_state["last_report"] = rep
+
+
+def copy_list_markdown(month: str | None) -> str:
+    """The tabs to copy, with a tick for each one already held for the newest month."""
+    head = f"| Copy this tab | Select | {month or 'Status'} |"
+    rows = [head, "|---|---|:-:|"]
+    for table, city, tab, pick in COPY_LIST:
+        have = month is not None and item_name(table, city) not in store.missing(month)
+        rows.append(f"| **{tab}** | {pick} | {':green[✓]' if have else ':red[✗]'} |")
+    return "\n".join(rows)
+
+
 def data_tab() -> None:
     if "last_report" in st.session_state:
         show_report(st.session_state.pop("last_report"))
     st.subheader("Import a new month")
-    st.markdown("Copy these tables from the simulation (each paste contains the full history):")
-    st.markdown(bullets([
-        "**Required:** price history, unit sales, market demand, capacity utilization, "
-        "net income *total* and *per rented vehicle* (Orlando and Miami each).",
-        "**Optional:** fleet size, net income *per vehicle per month* (used for the unit-economics "
-        "chart) and *% of revenue*.",
-    ]))
-    st.markdown(bullets([
-        "Paste one table at a time, **or** drop the saved .txt files, **or** import a folder.",
-        "Re-importing the same months is safe: values merge by month.",
-        "Any change to an earlier month is flagged.",
-    ]))
-
-    c1, c2 = st.columns(2)
+    newest = store.newest_month()
+    c1, c2 = st.columns([2, 3])
     with c1:
-        st.markdown("**Paste one table**")
-        text = st.text_area("Paste copied table (tab-separated)", height=170, key="paste_text",
-                            label_visibility="collapsed",
-                            placeholder="Copy a table from the simulation and paste it here…")
-        city = None
-        if text.strip():
-            try:
-                kind = detect_kind(read_grid(text))
-                st.caption(f"Detected: **{ALL_TABLES.get(kind, 'net income screen') if kind != 'net_income' else 'Net income screen'}**")
-                if kind == "net_income":
-                    city = st.selectbox("Which city is this net income screen for?", CITIES,
-                                        index=None, placeholder="Choose a city")
-            except ParseError as exc:
-                st.error(str(exc))
-        if st.button("Add pasted table", disabled=not text.strip()):
-            finish_import(store.add_text(text, city=city, label="Pasted table"))
-
+        st.markdown("**Copy these 6 tabs from the simulation**")
+        st.markdown(copy_list_markdown(newest))
+        if newest and store.missing(newest):
+            st.warning(f"{newest} is still missing: {', '.join(store.missing(newest))}.")
+        elif newest:
+            st.success(f"Data is complete through {newest}. After the next round, paste the new "
+                       "tables.")
+        st.caption("Nothing else is needed: per-vehicle and % screens, fleet size and the Florida "
+                   "net income view are not used.")
     with c2:
-        st.markdown("**Drop files or import a folder**")
-        files = st.file_uploader("Upload .txt tables", type=["txt"], accept_multiple_files=True,
-                                 label_visibility="collapsed")
+        st.markdown("**Paste them all here**")
+        st.text_area("Paste copied tables (tab-separated)", height=210, key="paste_text",
+                     label_visibility="collapsed", on_change=import_pasted,
+                     placeholder="Copy a tab, paste it here, copy the next, paste again…\n"
+                                 "Any order. Then press Ctrl+Enter (or click outside this box).")
+        st.markdown(bullets([
+            "After the last paste press **Ctrl+Enter** or click outside the box: it imports "
+            "by itself, no button.",
+            "Each net income city is detected from its numbers.",
+            "Each paste holds the full history, so re-importing is safe; changes to earlier "
+            "months are flagged.",
+        ]))
+    pending = st.session_state.get("pending_city") or []
+    if pending:
+        st.warning(f"{len(pending)} net income table(s) could not be matched to a city "
+                   "(the prices and unit sales to match them with are not loaded yet, or it is "
+                   "a screen that can't be matched). Choose the city:")
+        picks = [st.selectbox(f"Net income table {i}", CITIES, index=None,
+                              placeholder="Choose a city", key=f"pending_city_{i}")
+                 for i in range(1, len(pending) + 1)]
+        if st.button("Import with these cities", disabled=any(p is None for p in picks)):
+            rep = ImportReport()
+            for block, pick in zip(pending, picks):
+                store.add_pasted(block, city=pick, report=rep)
+            st.session_state["pending_city"] = []
+            finish_import(rep)
+
+    with st.expander("Other ways to import (saved .txt files, a folder)"):
+        files = st.file_uploader("Upload .txt tables", type=["txt"], accept_multiple_files=True)
         if files and st.button(f"Import {len(files)} file(s)"):
             rep = ImportReport()
             for f in files:
-                store.add_text(f.getvalue().decode("utf-8-sig"),
-                               city=guess_city_from_name(f.name), label=f.name, report=rep)
+                store.add_pasted(f.getvalue().decode("utf-8-sig"), label=f.name, report=rep)
             finish_import(rep)
         folder = st.text_input("Folder of .txt files", value=str(ROOT / "inbox"),
-                               help="Net income files need 'orlando' or 'miami' in the file name.")
+                               help="Net income files need 'orlando' or 'miami' in the file "
+                                    "name, unless they are the total screen (detected).")
         if st.button("Import folder"):
             finish_import(store.add_folder(folder))
 
@@ -175,10 +206,9 @@ latest, prev = data.months[-1], data.months[-2]    # always: this round vs the p
 
 st.caption(f"Analysing **{latest}** against **{prev}** · months in the data: "
            f"{', '.join(data.months)}")
-incomplete = [m for m in store.months() if m not in months_ok]
-if incomplete:
-    st.warning(f"Skipped (missing required tables): {', '.join(incomplete)}. "
-               "See the Import & data tab.")
+for m in (m for m in store.months() if m not in months_ok):
+    st.warning(f"Missing for {m}: {', '.join(store.missing(m))}. Showing {latest} against {prev} "
+               "until they are pasted (Import & data tab).", title=f"{m} is incomplete")
 for note in insights.caveats(data):
     st.caption(f"ℹ️ {note}")
 

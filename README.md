@@ -9,28 +9,35 @@ analysis, a profit bridge, a what-if planner and break-even charts.
 cd pricing-sim
 pip install -r requirements.txt
 streamlit run app.py          # opens http://localhost:8501
-pytest                        # 52 tests
+pytest
 ```
 
 First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 
-## Each new month
+## Each new month (under a minute)
 
-1. Run the simulation, then open **Import & data**.
-2. Paste each table (the app detects which screen it is; for net income screens pick Orlando
-   or Miami), **or** save the copied tables as `.txt` into `inbox/` (or any folder) and click
-   **Import folder**. For folder imports, net income file names need `orlando` / `miami`.
-3. Every paste contains the full history, so re-importing is safe: values merge by month, and
-   any change to an *earlier* month is flagged.
+1. Open **Import & data**. The list beside the box shows what to copy and ticks what is already in.
+2. Copy these **6 tabs** and paste them one after another into the one box (any order):
 
-| Table | Needed? |
-|---|---|
-| Price history, unit sales, market demand, capacity utilization | required |
-| Net income **total** and **per rented vehicle** (Orlando and Miami each) | required |
-| Net income **per vehicle per month** | optional (unit-economics chart) |
-| Net income **% of revenue**, fleet size | optional (stored, not yet analysed) |
+   | Tab | Select |
+   |---|---|
+   | Price history | nothing to select |
+   | Unit sales | nothing to select |
+   | Market demand | nothing to select |
+   | Capacity utilization | nothing to select |
+   | Net income | City: Orlando, Format: Total |
+   | Net income | City: Miami, Format: Total |
 
-A month appears in the analysis once every required table is present.
+3. Press **Ctrl+Enter** (or click outside the box). It imports by itself: no button, no city
+   question (each net income city is detected from its numbers).
+
+Nothing else is needed. The per-rented-vehicle, per-vehicle and % screens are derived from net income
+total, and fleet size is not used. If a tab is missing, a banner names it and the dashboard keeps
+showing the last complete month until you paste it.
+
+Every paste contains the full history, so re-importing is safe: values merge by month, and any
+change to an *earlier* month is flagged. Saved `.txt` files and folders (`inbox/`) still work under
+"Other ways to import".
 
 ## Controls
 

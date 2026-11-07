@@ -12,7 +12,7 @@ See `README.md` for the user-facing description. This file is for working on the
 ```powershell
 pip install -r requirements.txt
 streamlit run app.py        # http://localhost:8501
-pytest                      # whole suite, about 6 s (52 tests at last count)
+pytest                      # whole suite, about 50 s
 pytest tests/test_price_guide.py -q    # one file while iterating
 ```
 
@@ -35,7 +35,7 @@ pytest tests/test_price_guide.py -q    # one file while iterating
    focus-month / sensitivity-case selectors were removed on purpose: the app compares the latest month with
    the previous one and shows both sensitivity assumptions side by side. Don't add other selectors; if
    something needs a choice, show both outcomes instead. (The only allowed selectbox is the city picker
-   when pasting a net income table.) Everything is computed for all segments; `config.scope()` filters at
+   for a pasted net income table the app could not place.) Everything is computed for all segments; `config.scope()` filters at
    render time. Bridge, break-even, heatmap and price guide are city-level (both day periods), so with one
    day period selected they show a note saying so. With one day period, profit figures are that period's
    contribution (pre-tax profit is only reported per city): `model.scope_performance`.
@@ -85,9 +85,19 @@ One row per number: `table, city, daypart, firm, field, month, value` in `data/f
 
 Tab-separated, CRLF line endings, no trailing newline, multi-row merged headers (forward-filled),
 values with `$`, `%`, thousands commas, float noise like `32700.000000000004` (rounded to 9 d.p.).
-Net income screens are transposed and carry no city, so the city comes from the UI selectbox or the
-file name (`orlando` / `miami`); the basis (total / per vehicle per month / per rented vehicle / %)
-is auto-detected. Parser changes must keep all 13 files in `sample_data/` parsing (`test_parsers.py`).
+Net income screens are transposed and carry no city. `Store.add_pasted` detects it for the *total*
+basis by matching revenue to our price x unit sales (`infer_net_income_city`); other bases, or a paste
+with nothing to match against, come back in `ImportReport.unresolved` and the UI asks. The basis (total
+/ per vehicle per month / per rented vehicle / %) is auto-detected. A paste may hold several tables:
+`split_tables` cuts at each header row, and copes with tables glued together (the simulation copies no
+trailing newline). Parser changes must keep all 13 files in `sample_data/` parsing (`test_parsers.py`,
+`test_paste_many.py`).
+
+**What the user copies each round (`config.COPY_LIST`, shown beside the paste box):** price history, unit
+sales, market demand, capacity utilization, net income total for Orlando and Miami. That is all
+`REQUIRED_TABLES` needs. Per-rented-vehicle (`prv`) and per-vehicle-per-month (`pvpm`) views are
+*derived* in `SimData.net` (total / rentals, total / fleet) and a stored screen wins when present.
+Don't make a derivable screen required again: the user has 1-2 minutes per round.
 
 ## Modelling notes you need before touching `model.py`
 
@@ -119,6 +129,10 @@ is auto-detected. Parser changes must keep all 13 files in `sample_data/` parsin
 ## Tests
 
 - `test_parsers.py`: number parsing, kind detection, net-income basis detection, merge idempotence.
+- `test_paste_many.py`: splitting one paste into tables (any separator, any order), city detection,
+  `add_pasted` equals importing the files. `test_derived_views.py`: derived prv/pvpm match the real screens
+  and the price guide is unchanged. `test_app_import.py`: the box end to end (uses `PRICING_SIM_DATA` to point
+  the app at a temp file, never `facts.csv`), partial paste banner.
 - `test_parity.py`: compares the model with `tests/prototype_golden.json`, a **frozen** snapshot of the
   old spreadsheet's results. Exact match for most stats; demand-based stats use tolerances because
   demand is now derived (Miami weekend Oct differs about 4%, so its demand-slope tolerance is 1.5). The golden

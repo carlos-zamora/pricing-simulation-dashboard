@@ -66,3 +66,21 @@ OPTIONAL_TABLES = {
     "net_income_pct": "Net income - % of revenue",
 }
 ALL_TABLES = {**REQUIRED_TABLES, **OPTIONAL_TABLES}
+
+
+# What to copy each round, in the order shown to the user: (table, city, simulation tab, selection).
+# Net income screens are one item per city. Anything else the simulation can show is not needed.
+COPY_LIST = [
+    ("price", None, "Price history", "nothing to select"),
+    ("unit_sales", None, "Unit sales", "nothing to select"),
+    ("market_demand", None, "Market demand", "nothing to select"),
+    ("capacity_utilization", None, "Capacity utilization", "nothing to select"),
+    *[("net_income_total", c, "Net income", f"City: {c} · Format: Total") for c in CITIES],
+]
+assert {t for t, *_ in COPY_LIST} == set(REQUIRED_TABLES)
+
+
+def item_name(table: str, city: str | None) -> str:
+    """Short label for one thing to copy, e.g. 'Net income (Miami, total)'."""
+    base = REQUIRED_TABLES[table].split(" - ")[0]
+    return f"{base} ({city}, total)" if city else base
