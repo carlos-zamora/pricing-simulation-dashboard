@@ -1,4 +1,4 @@
-"""The import box: paste the seven tabs for a new month in one go, or only some of them."""
+"""The import box: paste the eight tabs for a new month in one go, or only some of them."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,7 +28,7 @@ def _november(name: str) -> str:
 
 
 SIX = ["price_history", "unit_sales", "market_demand", "fleet_size", "capacity_utilization",
-       "net_income_total-orlando", "net_income_total-miami"]
+       "market_research", "net_income_total-orlando", "net_income_total-miami"]
 
 
 @pytest.fixture
@@ -52,15 +52,15 @@ def test_copy_list_is_shown_next_to_the_box(app):
     assert not app.exception
     text = _text(app)
     for tab in ("Price history", "Unit sales", "Market demand", "Fleet size",
-                "Capacity utilization"):
+                "Capacity utilization", "Market research"):
         assert f"**{tab}**" in text
     for city in ("Orlando", "Miami"):
         assert f"**City:** {city}<br>**Format:** Total" in text
-    assert "Copy these 7 tabs" in text
+    assert "Copy these 8 tabs" in text
 
 
 @pytest.mark.parametrize("sep", ["", "\r\n"])
-def test_pasting_the_seven_tabs_adds_the_new_month(app, tmp_path, sep):
+def test_pasting_the_eight_tabs_adds_the_new_month(app, tmp_path, sep):
     at = _paste(app, SIX, sep)
     assert not at.exception and not at.warning
     assert at.text_area(key="paste_text").value == ""             # emptied after importing
@@ -97,11 +97,11 @@ def test_net_income_that_cannot_be_matched_asks_for_a_city(tmp_path, monkeypatch
 def test_copy_list_is_numbered_in_the_order_of_the_simulation_tabs(app):
     table = next(m.value for m in app.markdown if "Copy this tab" in m.value)
     rows = [r.split("|")[1:3] for r in table.splitlines()[2:]]
-    assert [n.strip() for n, _ in rows] == ["1", "2", "3", "4", "5", "6", "7"]
+    assert [n.strip() for n, _ in rows] == ["1", "2", "3", "4", "5", "6", "7", "8"]
     assert [t.strip("* ") for _, t in rows] == ["Price history", "Market demand", "Unit sales",
-                                                 "Fleet size", "Capacity utilization", "Net income",
-                                                 "Net income"]
-    assert "Orlando" in table.splitlines()[7] and "Miami" in table.splitlines()[8]
+                                                 "Fleet size", "Capacity utilization",
+                                                 "Market research", "Net income", "Net income"]
+    assert "Orlando" in table.splitlines()[8] and "Miami" in table.splitlines()[9]
 
 
 def test_missing_fleet_size_is_named_in_the_banner(app):

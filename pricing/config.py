@@ -61,6 +61,7 @@ REQUIRED_TABLES = {
     "market_demand": "Market demand",
     "unit_sales": "Unit sales",
     "fleet_size": "Fleet size",
+    "market_research": "Market research",      # Univ's share among business / leisure customers
     "net_income_total": "Net income - total",
 }
 # Optional: never needed, because the dashboard derives them from the required tables. (Fleet size
@@ -74,7 +75,7 @@ ALL_TABLES = {**REQUIRED_TABLES, **OPTIONAL_TABLES}
 
 
 # What to copy each round, in the left-to-right order of the simulation's tabs (price history, market
-# demand, unit sales, fleet size, capacity utilization, [market research], net income): (table, city, simulation tab, selection).
+# demand, unit sales, fleet size, capacity utilization, market research, net income): (table, city, simulation tab, selection).
 # Net income screens are one item per city. Anything else the simulation can show is not needed.
 COPY_LIST = [
     ("price", None, "Price history", "nothing to select"),
@@ -82,6 +83,7 @@ COPY_LIST = [
     ("unit_sales", None, "Unit sales", "nothing to select"),
     ("fleet_size", None, "Fleet size", "nothing to select"),
     ("capacity_utilization", None, "Capacity utilization", "nothing to select"),
+    ("market_research", None, "Market research", "nothing to select"),
     *[("net_income_total", c, "Net income", f"**City:** {c}<br>**Format:** Total") for c in CITIES],
 ]
 assert {t for t, *_ in COPY_LIST} == set(REQUIRED_TABLES)

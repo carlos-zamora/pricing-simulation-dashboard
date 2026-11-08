@@ -27,10 +27,10 @@ def _lean(full: pd.DataFrame, drop=DERIVED) -> pd.DataFrame:
     return full[~full["table"].isin(drop)].reset_index(drop=True)
 
 
-def test_only_seven_screens_are_required():
+def test_only_eight_screens_are_required():
     assert "net_income_prv" not in REQUIRED_TABLES
-    assert set(REQUIRED_TABLES) == {"price", "unit_sales", "market_demand",
-                                    "capacity_utilization", "fleet_size", "net_income_total"}
+    assert set(REQUIRED_TABLES) == {"price", "unit_sales", "market_demand", "capacity_utilization",
+                                    "fleet_size", "market_research", "net_income_total"}
 
 
 @pytest.mark.parametrize("city", CITIES)

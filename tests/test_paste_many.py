@@ -23,7 +23,7 @@ def _key(parsed):
 
 @pytest.mark.parametrize("sep", ["", "\n", "\r\n", "\n\n", "\r\n\r\n", "  \n"])
 def test_all_sample_files_in_one_paste_split_back(sep):
-    """Any separator (including none at all) cuts the 13 sample tables back apart."""
+    """Any separator (including none at all) cuts the sample tables back apart."""
     texts = [_raw(f) for f in FILES]
     parts = split_tables(sep.join(texts))
     assert len(parts) == len(FILES)
@@ -110,10 +110,10 @@ def test_one_paste_of_every_sample_equals_importing_the_files(tmp_path, sep):
     assert sort_facts(kept).equals(sort_facts(one_paste.facts))
 
 
-def test_required_seven_are_enough_in_any_order(tmp_path):
-    """The seven tabs copied each round, shuffled, with the city never stated."""
+def test_required_eight_are_enough_in_any_order(tmp_path):
+    """The eight tabs copied each round, shuffled, with the city never stated."""
     names = ["price_history", "unit_sales", "market_demand", "fleet_size", "capacity_utilization",
-             "net_income_total-orlando", "net_income_total-miami"]
+             "market_research", "net_income_total-orlando", "net_income_total-miami"]
     for seed in range(4):
         random.Random(seed).shuffle(names)
         store = Store(tmp_path / f"f{seed}.csv")

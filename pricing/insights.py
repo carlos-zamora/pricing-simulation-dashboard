@@ -5,9 +5,10 @@ so the UI can show them on separate lines.
 """
 from __future__ import annotations
 
-from .charts import money
+from .charts import money, price
 from .data import SimData
-from .model import Bridge, BreakEven, DemandVsUtil, PriceGuide, PriceVsUtil
+from .model import (RESEARCH_CAPPED, RESEARCH_NO_GAP, Bridge, BreakEven, DemandVsUtil, PriceGuide,
+                    PriceVsUtil, ResearchFit)
 
 GOOD, BAD, INFO = "good", "bad", "info"      # green / red / yellow font color in the UI
 
@@ -207,6 +208,54 @@ def pick_readout(g: PriceGuide, data: SimData, month: str) -> list[str]:
                      "small steps)")
         out.append(line + ".")
     return out
+
+
+def _r2(v: float | None) -> str:
+    return "n/a" if v is None else f"{v:.2f}"
+
+
+def research_insight(f: ResearchFit) -> Insight:
+    """Business vs leisure for one segment: headline, then the numbers behind it.
+    Makes no sensitivity claim when the data can't support one."""
+    dp = f.daypart
+    if f.status == RESEARCH_CAPPED:
+        return Insight([f"**{dp}: can't be measured.**",
+                        "Univ sold out (utilization at 100%), so our share was set by the number of cars, "
+                        "not by price."])
+    if f.status == RESEARCH_NO_GAP:
+        gap = f.table["gap"].dropna()
+        return Insight([f"**{dp}: can't be measured.**",
+                        f"Our price was {price(float(gap.iloc[-1]), True)} vs Comp every month, so there is "
+                        "no price change to learn from."])
+    b, l = f.slope["business"], f.slope["leisure"]
+    numbers = (f"Per +$1 above Comp: business share {b:+.1f} pts (R² {_r2(f.r2['business'])}) · "
+               f"leisure share {l:+.1f} pts (R² {_r2(f.r2['leisure'])})")
+    elast = (f"Elasticity (% share change per 1% price): business {f.elasticity['business']:+.2f} · "
+             f"leisure {f.elasticity['leisure']:+.2f}")
+    if l <= -0.2 and l < b - 0.2:
+        times = f" (about {f.ratio:.0f}× as much as business)" if f.ratio and f.ratio >= 1.5 else (
+            " (business didn't move)" if abs(b) < 0.05 else "")
+        head = f"**{dp}: leisure customers react more to our price**{times}."
+        diff = (f"For each $1 above Comp, our leisure share falls {f.diff_slope:.1f} pts further than "
+                "our business share.")
+        hint = ("A premium over Comp mainly costs leisure customers; business customers mostly stay.")
+        return Insight([head, numbers, diff, elast, hint])
+    if b <= -0.2 and b < l - 0.2:
+        return Insight([f"**{dp}: business customers reacted more than leisure here** "
+                        "(the opposite of the usual pattern).", numbers, elast])
+    return Insight([f"**{dp}: no clear difference between business and leisure.**",
+                    numbers, elast])
+
+
+def research_oneliner(f: ResearchFit) -> str | None:
+    """One short line for the Overview and planner, only when a segment shows the pattern."""
+    if not f.measurable:
+        return None
+    b, l = f.slope["business"], f.slope["leisure"]
+    if l <= -0.2 and l < b - 0.2:
+        return (f"Market research ({f.name}): **leisure customers are the price-sensitive ones** "
+                f"(share {l:+.1f} pts per +$1 vs business {b:+.1f}).")
+    return None
 
 
 def caveats(data: SimData) -> list[str]:

@@ -55,6 +55,10 @@ class SimData:
     def units(self, city: str, daypart: str, firm: str) -> pd.Series:
         return self.series("unit_sales", "units", city, daypart, firm)
 
+    def research(self, city: str, daypart: str, customer: str) -> pd.Series:
+        """Market research: Univ's share (fraction) among 'business' or 'leisure' customers."""
+        return self.series("market_research", f"share_{customer}", city, daypart, "Univ")
+
     def fleet(self, city: str) -> pd.Series:
         return self.series("fleet_size", "fleet_size", city)
 

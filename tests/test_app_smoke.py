@@ -69,6 +69,15 @@ def test_every_selector_combination_runs(city, daypart):
             data_file.unlink()
 
 
+def test_business_vs_leisure_tab_with_research():
+    at = _run()
+    assert not at.exception
+    assert "Business vs Leisure" in [t.label for t in at.tabs]
+    text = _text(at)
+    assert "leisure customers react more to our price" in text
+    assert "can't be measured" in text                     # Miami explained, no claim
+
+
 def test_reset_button_puts_back_last_months_prices_and_fleets():
     at = _run()
     assert not at.exception

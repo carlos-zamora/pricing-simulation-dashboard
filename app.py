@@ -259,6 +259,13 @@ bes = {c: model.break_even(data, c, latest, prev) for c in CITIES}
 ue = model.unit_economics(data)
 contrib = model.weekday_weekend_contribution(data)
 dem_readouts = insights.demand_readouts(data, dvu)
+research = model.research_sensitivity(data)
+
+
+def research_lines(segments) -> list[insights.Insight]:
+    """Market-research one-liners for these segments (only where the pattern shows)."""
+    return [insights.Insight([line]) for seg in segments
+            if (line := insights.research_oneliner(research[seg]))]
 
 # --------------------------------------------------------------------------- #
 # Always-visible header: price stance + last month's status (every tab, every view)
@@ -399,7 +406,8 @@ st.divider()
 # `key` makes Streamlit remember the open tab across reruns. Without it, any change in the number of
 # banners above the tabs (e.g. a "missing table" warning after a paste) resets it to Overview.
 tabs = st.tabs(["Overview", "Price planner", "Price vs Utilization", "Demand vs Utilization",
-                "Profit bridge", "Break-even & economics", "Import & data"], key="main_tabs")
+                "Business vs Leisure", "Profit bridge", "Break-even & economics", "Import & data"],
+               key="main_tabs")
 
 # --------------------------------------------------------------------------- #
 # Overview
@@ -439,7 +447,8 @@ with tabs[0]:
                    [insights.profit_insight(model.combine_bridges([bridges[c] for c in sel_cities]))])
     for city in sel_cities:
         city_block(city, insights.city_readouts(city, guides[city], bridges[city], bes[city],
-                                                data, latest, sel_dayparts))
+                                                data, latest, sel_dayparts)
+                   + research_lines([(city, dp) for dp in sel_dayparts]))
     if not whole_city:
         st.caption(CITY_LEVEL_NOTE + " (Bridge, break-even and the price suggestion above.)")
 
@@ -505,7 +514,7 @@ with tabs[1]:
                 st.markdown(f"**{city} – {dp}**")
                 st.plotly_chart(wi_figs[(city, dp)], width="stretch", key=f"wi_lines_{city}_{dp}")
                 st.markdown(chr(10).join(nested(i) for i in insights.slope_insight(
-                    cautious_segs, optimistic_segs, [(city, dp)])))
+                    cautious_segs, optimistic_segs, [(city, dp)]) + research_lines([(city, dp)])))
 
 # --------------------------------------------------------------------------- #
 # Price vs Utilization
@@ -559,9 +568,44 @@ with tabs[3]:
                 data.utilization("Miami", "Weekday")), width="stretch", key="miami_unfilled")
 
 # --------------------------------------------------------------------------- #
-# Profit bridge
+# Business vs Leisure (market research)
 # --------------------------------------------------------------------------- #
 with tabs[4]:
+    st.markdown(bullets([
+        "**Market research** gives Univ's share among **business** and among **leisure** customers "
+        "in each day period.",
+        "**Slope** = share points we gain or lose per +$1 we charge above Comp. More negative = "
+        "more price sensitive.",
+        "Shares are whole percentages and come from a survey (they don't match unit sales exactly), "
+        "so a 1-point move is the smallest step we can see. Treat slopes as directional.",
+    ]))
+    for city in sel_cities:
+        st.markdown(f"### {city}")
+        for dp in sel_dayparts:
+            f = research[(city, dp)]
+            st.markdown(f"#### {f.name}")
+            a, b = st.columns(2)
+            a.plotly_chart(charts.research_scatter(f), width="stretch", key=f"rs1_{city}_{dp}")
+            b.plotly_chart(charts.research_shares_by_month(f), width="stretch",
+                           key=f"rs2_{city}_{dp}")
+            st.markdown(nested(insights.research_insight(f)))
+    with st.expander("Summary table"):
+        rows = []
+        for seg in sel_segs:
+            f = research[seg]
+            row = {"Segment": f.name, "Status": f.status.replace("_", " ")}
+            for cust in model.CUSTOMERS:
+                s, e, r2 = f.slope[cust], f.elasticity[cust], f.r2[cust]
+                row[f"{cust.title()} pts per +$1"] = None if s is None else round(s, 2)
+                row[f"{cust.title()} elasticity"] = None if e is None else round(e, 2)
+                row[f"{cust.title()} R²"] = None if r2 is None else round(r2, 2)
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+# --------------------------------------------------------------------------- #
+# Profit bridge
+# --------------------------------------------------------------------------- #
+with tabs[5]:
     st.markdown(f"What moved profit from **{prev}** to **{latest}**:")
     st.markdown(bullets([
         "**Price effect** = price change × new volume.",
@@ -584,7 +628,7 @@ with tabs[4]:
 # --------------------------------------------------------------------------- #
 # Break-even & economics
 # --------------------------------------------------------------------------- #
-with tabs[5]:
+with tabs[6]:
     st.subheader(f"Break-even utilization ({latest} volumes & costs)")
     st.markdown(bullets([
         f"**@ {latest} prices:** profit at each utilization level with the current prices.",
@@ -612,5 +656,5 @@ with tabs[5]:
         st.dataframe(ue, hide_index=True, width="stretch")
         st.dataframe(contrib, hide_index=True, width="stretch")
 
-with tabs[6]:
+with tabs[7]:
     data_tab()

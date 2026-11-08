@@ -92,6 +92,8 @@ def _fleet_field(label: str) -> tuple[str, str]:
 
 
 _MARKET_FIELDS = {"Market Demand": "demand", "Total Sales": "sales", "Unfilled Orders": "unfilled"}
+# Market research: Univ's share among business ('Bus.') and leisure ('Leis.') customers.
+_RESEARCH_FIELDS = {"Bus.": "share_business", "Leis.": "share_leisure"}
 
 
 def _levels_to_fact(kind: str, levels: list[str]) -> tuple[str, str, str, str]:
@@ -112,6 +114,11 @@ def _levels_to_fact(kind: str, levels: list[str]) -> tuple[str, str, str, str]:
     if kind == "market_demand":
         city, label = levels
         return city, "", "", _MARKET_FIELDS[label]
+    if kind == "market_research":
+        city, daypart, customer = levels
+        if customer not in _RESEARCH_FIELDS:
+            raise ParseError(f"Unexpected column label {customer!r}")
+        return city, daypart, "Univ", _RESEARCH_FIELDS[customer]
     raise ParseError(f"Unknown table kind {kind}")
 
 
@@ -135,11 +142,13 @@ def detect_kind(grid: list[list[str]]) -> str:
         return "fleet_size"
     if "Market Demand" in fields:
         return "market_demand"
+    if fields and fields <= set(_RESEARCH_FIELDS):
+        return "market_research"
     if fields <= {"Wkdy", "Wknd", "Total"} and len(groups) >= 2 and "Utilization" in groups[1]:
         return "capacity_utilization"
     raise ParseError("Could not recognise this table. Expected one of: price history, unit "
-                     "sales, market demand, fleet size, capacity utilization or a net income "
-                     "screen.")
+                     "sales, market demand, fleet size, capacity utilization, market research "
+                     "or a net income screen.")
 
 
 def _month_row(grid: list[list[str]]) -> int:

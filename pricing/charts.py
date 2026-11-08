@@ -10,8 +10,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .config import SEGMENTS
-from .model import (CASE_GAP_ONLY, CASE_LABELS, Bridge, BreakEven, DemandVsUtil, PriceVsUtil,
-                    WhatIfGrid, WhatIfSegment, linfit, whatif_curve)
+from .model import (CASE_GAP_ONLY, CASE_LABELS, CUSTOMERS, Bridge, BreakEven, DemandVsUtil,
+                    PriceVsUtil, ResearchFit, WhatIfGrid, WhatIfSegment, linfit, whatif_curve)
 
 # Categorical slots, fixed order (validated light/dark set).
 BLUE, ORANGE, AQUA, MAGENTA = "#2a78d6", "#eb6834", "#1baf7a", "#e87ba4"
@@ -166,6 +166,70 @@ def sales_vs_unfilled(months, sales, unfilled, util) -> go.Figure:
     fig.update_yaxes(tickformat=".0%", range=[0, 1.05], row=2, col=1)
     fig.update_annotations(font=dict(size=12, color=INK))
     return _style(fig, 420)
+
+
+# --------------------------------------------------------------------------- #
+# Business vs leisure (market research)
+# --------------------------------------------------------------------------- #
+_CUSTOMER_STYLE = {"business": ("Business", BLUE, "top center"),
+                   "leisure": ("Leisure", ORANGE, "bottom center")}
+
+
+def research_scatter(f: ResearchFit) -> go.Figure:
+    """Univ share among business and leisure customers vs the price gap, each with a best-fit
+    line whose slope and R² are in the legend. No line where the segment can't be measured."""
+    t = f.table.dropna(subset=["business", "leisure"])
+    fig = go.Figure()
+    for cust in CUSTOMERS:
+        name, color, pos = _CUSTOMER_STYLE[cust]
+        x, y = t["gap"].to_numpy(float), t[cust].to_numpy(float)
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="markers+text", text=list(t.index), textposition=pos,
+            textfont=dict(color=INK, size=10), cliponaxis=False, name=name,
+            marker=dict(size=10, color=color, line=dict(color="rgba(255,255,255,.9)", width=2)),
+            hovertemplate=f"{name} %{{text}}<br>gap %{{x:+.0f}}<br>share %{{y:.0%}}<extra></extra>"))
+        fit = linfit(x, y)
+        if f.measurable and fit.slope is not None:
+            xs = np.array([x.min(), x.max()])
+            r2 = "n/a" if fit.r2 is None else f"{fit.r2:.2f}"
+            fig.add_trace(go.Scatter(
+                x=xs, y=fit.predict(xs), mode="lines", line=dict(color=color, width=2),
+                name=f"{name} best fit<br>slope {fit.slope * 100:+.2f} share pts per +$1<br>R² {r2}",
+                hovertemplate=f"{name}: {fit.slope * 100:+.2f} share pts per +$1<extra></extra>"))
+    if not f.measurable:
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", line=dict(color=INK, width=2),
+                                 name="No best fit (can't be measured)"))
+    half = (float(np.nanmax(np.abs(t["gap"]))) if len(t) else 0.0) * 1.3 or 1.0
+    fig.update_xaxes(title="Univ – Comp price gap ($)", range=[-half, half], zeroline=True,
+                     zerolinecolor=INK, zerolinewidth=1)
+    ys = pd.concat([t["business"], t["leisure"]]) if len(t) else pd.Series([0.5])
+    span = max(float(ys.max() - ys.min()), 0.02)
+    # Research shares are whole percentages: one tick per point, never repeated labels.
+    fig.update_yaxes(title="Univ share of customers", tickformat=".0%", dtick=0.01,
+                     range=[float(ys.min()) - 0.3 * span, float(ys.max()) + 0.3 * span])
+    fig = _style(fig, 430)
+    fig.update_layout(margin=dict(t=20, b=8),
+                      legend=dict(orientation="v", xanchor="left", x=0, yanchor="top", y=-0.3))
+    return fig
+
+
+def research_shares_by_month(f: ResearchFit) -> go.Figure:
+    """Business and leisure share by month, plus Univ's overall share from unit sales as a check
+    on the survey."""
+    t = f.table
+    fig = go.Figure()
+    for cust in CUSTOMERS:
+        name, color, _ = _CUSTOMER_STYLE[cust]
+        fig.add_trace(_line(t.index, t[cust], f"{name} (research)", color,
+                            hovertemplate="%{x}: %{y:.0%}"))
+    fig.add_trace(go.Scatter(x=t.index, y=t["overall"], name="All customers (unit sales)",
+                             mode="lines+markers", line=dict(color=AQUA, width=2, dash="dot"),
+                             marker=dict(size=6, color=AQUA), hovertemplate="%{x}: %{y:.1%}"))
+    fig.update_yaxes(title="Univ share", tickformat=".0%", dtick=0.01)
+    fig = _style(fig, 430)
+    fig.update_layout(margin=dict(t=20, b=8),
+                      legend=dict(orientation="v", xanchor="left", x=0, yanchor="top", y=-0.18))
+    return fig
 
 
 # --------------------------------------------------------------------------- #

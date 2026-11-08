@@ -125,6 +125,82 @@ def demand_vs_util(data: SimData) -> dict[tuple[str, str], DemandVsUtil]:
 
 
 # --------------------------------------------------------------------------- #
+# Business vs leisure (market research)
+# --------------------------------------------------------------------------- #
+CUSTOMERS = ["business", "leisure"]
+RESEARCH_OK, RESEARCH_CAPPED, RESEARCH_NO_GAP = "ok", "capped", "no_gap_change"
+
+
+@dataclass
+class ResearchFit:
+    """How Univ's share among business and leisure customers moves with the Univ-Comp gap.
+
+    Slopes are in *share points* per +$1 of gap (negative: being pricier loses customers).
+    Elasticity = % change in our share for a 1% change in our price (slope / share x price)."""
+    city: str
+    daypart: str
+    table: pd.DataFrame                  # index month; gap, univ, business, leisure, overall
+    status: str                          # RESEARCH_* above
+    slope: dict[str, float | None]       # customer -> share pts per +$1
+    r2: dict[str, float | None]
+    elasticity: dict[str, float | None]
+    diff_slope: float | None             # (business - leisure) share pts per +$1
+
+    @property
+    def name(self) -> str:
+        return f"{self.city} – {self.daypart}"
+
+    @property
+    def measurable(self) -> bool:
+        return self.status == RESEARCH_OK
+
+    @property
+    def ratio(self) -> float | None:
+        """How many times more leisure reacts than business. None when not meaningful (a slope
+        is missing, leisure doesn't fall, or business didn't move at all)."""
+        b, l = self.slope["business"], self.slope["leisure"]
+        if b is None or l is None or l >= 0 or abs(b) < 0.05:
+            return None
+        return abs(l) / abs(b)
+
+
+def research_sensitivity(data: SimData) -> dict[tuple[str, str], ResearchFit]:
+    """Per segment: regress each customer type's Univ share on the Univ-Comp price gap.
+
+    Status: capped (Univ sold out in some month, so share was set by capacity, not by price),
+    no_gap_change (the gap never moved), else ok."""
+    out = {}
+    for city, dp in SEGMENTS:
+        univ_units, comp_units = data.units(city, dp, "Univ"), data.units(city, dp, "Comp")
+        t = pd.DataFrame({
+            "univ": data.price(city, dp, "Univ"),
+            "gap": data.price(city, dp, "Univ") - data.price(city, dp, "Comp"),
+            "business": data.research(city, dp, "business"),
+            "leisure": data.research(city, dp, "leisure"),
+            "overall": univ_units / (univ_units + comp_units),
+            "util": data.utilization(city, dp),
+        })
+        have = t.dropna(subset=["business", "leisure"])
+        slope, r2, elast = {}, {}, {}
+        for cust in CUSTOMERS:
+            fit = linfit(have["gap"], have[cust])
+            slope[cust] = None if fit.slope is None else float(fit.slope * 100)
+            r2[cust] = None if fit.r2 is None else float(fit.r2)
+            elast[cust] = (None if fit.slope is None
+                           else float(fit.slope / have[cust].mean() * have["univ"].mean()))
+        dfit = linfit(have["gap"], have["business"] - have["leisure"])
+        if (have["util"] >= 0.99).any():
+            status = RESEARCH_CAPPED
+        elif slope["business"] is None:
+            status = RESEARCH_NO_GAP
+        else:
+            status = RESEARCH_OK
+        out[(city, dp)] = ResearchFit(city, dp, t, status, slope, r2, elast,
+                                      None if dfit.slope is None else float(dfit.slope * 100))
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Price vs pre-tax profit
 # --------------------------------------------------------------------------- #
 def price_vs_profit(data: SimData, city: str) -> pd.DataFrame:

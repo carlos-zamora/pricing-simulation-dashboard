@@ -102,7 +102,7 @@ trailing newline). Parser changes must keep all 13 files in `sample_data/` parsi
 `test_paste_many.py`).
 
 **What the user copies each round (`config.COPY_LIST`, shown beside the paste box):** price history, unit
-sales, market demand, **fleet size**, capacity utilization, net income total for Orlando and Miami (7 tabs).
+sales, market demand, **fleet size**, capacity utilization, market research, net income total for Orlando and Miami (8 tabs).
 That is all `REQUIRED_TABLES` needs. Fleet size is required because the team sets capacity every month
 (per city); the Import & data tab builds its heading and checklist from `COPY_LIST`, so adding a table there
 updates it, but its captions/tips and the README table are hand-written: update them too. Per-rented-vehicle (`prv`) and per-vehicle-per-month (`pvpm`) views are
@@ -135,6 +135,17 @@ Don't make a derivable screen required again: the user has 1-2 minutes per round
 - Orlando: hold at $41 weekday / $34 weekend (worst-case profit $2.15M). Cautious says cut, optimistic says raise.
 - Miami: no recommendation. Weekday is at 100% utilization with about 64,000 unfilled orders (about 10% of demand);
   weekend price gap never changed.
+
+## Business vs Leisure (market research)
+
+- `market_research` is a required table (the user asked for this): a month isn't analysed until it is pasted.
+- Values are Univ's share among business / leisure customers (`firm="Univ"`, fields `share_business` / `share_leisure`).
+  Bus. + Leis. doesn't sum to 100%, so it is *not* the business/leisure mix. It is a survey: whole percentages,
+  and it doesn't reconcile exactly with unit sales.
+- `model.research_sensitivity`: share pts per +$1 gap per customer type. Status `capped` if Univ hit ≥99% utilization
+  in any month; `no_gap_change`. Readout only: it doesn't feed the price guide (that would need user approval).
+- Sample data: Orlando weekday leisure −1.0 / business −0.2; Orlando weekend leisure −0.45 / business 0;
+  Miami weekday capped; Miami weekend no gap change.
 
 ## Profit/loss, capacity and the planner (added after the game started)
 

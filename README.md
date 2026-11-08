@@ -17,7 +17,7 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
 ## Each new month (under a minute)
 
 1. Open **Import & data**. The list beside the box shows what to copy and ticks what is already in.
-2. Copy these **7 tabs** and paste them one after another into the one box (any order):
+2. Copy these **8 tabs** and paste them one after another into the one box (any order):
 
    | # | Tab | Select |
    |:-:|---|---|
@@ -26,8 +26,9 @@ First launch loads `sample_data/` (Jul–Oct) so there is something to look at.
    | 3 | Unit sales | nothing to select |
    | 4 | Fleet size | nothing to select |
    | 5 | Capacity utilization | nothing to select |
-   | 6 | Net income | City: Orlando, Format: Total |
-   | 7 | Net income | City: Miami, Format: Total |
+   | 6 | Market research | nothing to select |
+   | 7 | Net income | City: Orlando, Format: Total |
+   | 8 | Net income | City: Miami, Format: Total |
 
    The order follows the simulation's tabs left to right, so you can go down the list.
 
@@ -67,6 +68,13 @@ A day period is only moved if the data show price matters there. Where sensitivi
 measured (the price gap never changed, or utilization is pinned at capacity) its price is held
 and the app says why, because otherwise the model would treat price as free and suggest
 unlimited increases.
+
+**Business vs Leisure** tab: Univ's share among business
+and among leisure customers, plotted against the Univ–Comp price gap. A steeper (more negative)
+slope means those customers switch to Comp more readily when we charge more. On the sample data,
+Orlando weekday leisure share drops about 1.0 point per +$1 and business share about 0.2. Miami
+can't be measured: weekday Univ was sold out, and the weekend gap never changed. This is a readout
+only. The price suggestion doesn't use it.
 
 ## Layout
 
