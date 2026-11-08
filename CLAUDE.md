@@ -155,7 +155,8 @@ Don't make a derivable screen required again: the user has 1-2 minutes per round
   (Jul–Oct history is $0). Open question: whether the real simulation fills that row each round; if the user's
   first real month still shows `$0.00` there, switch to monthly pre-tax profit.
 - Segment cards show day-period *contribution* (before fixed costs), not pre-tax profit, so they differ from the
-  Florida figure by design.
+  Florida figure by design. They are **not** gated on `played_months`: they always show the latest month's
+  contribution and the delta vs the previous month (only the Florida/city profit/loss waits for the first played month).
 - **Capacity** is set per **city** (fleet size), not per day period. `WhatIfSegment.respond(price, new_fleet)`:
   rentals = min(demand, capacity); at full capacity our share of unfilled orders counts as extra demand;
   `scenario_profit(..., fleets)` charges vehicle inventory cost per vehicle added/removed. `price_guide` still

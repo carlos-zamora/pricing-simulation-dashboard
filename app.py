@@ -378,8 +378,9 @@ st.markdown(
     + ("n/a" if fl_cum is None else f"**{tone(charts.money(fl_cum), sign(fl_cum))}**")
     + " · " + " · ".join(f"{c} {charts.money(v)}" for c, v in status.city_profit.items()))
 if status.since is None:
-    st.caption("No game month played yet, so profit/loss shows $0 until the first month is played "
-               "(it is read from the simulation's accumulated pre-tax profit).")
+    st.caption("No game month played yet, so Florida and city profit/loss show $0 until the first month is "
+               "played (read from the simulation's accumulated pre-tax profit). "
+               "The cards below show each day period's contribution (before fixed costs).")
 for col, seg in zip(st.columns(len(SEGMENTS)), SEGMENTS):
     sg = status.segments[seg]
     rng = sg.elasticity_range

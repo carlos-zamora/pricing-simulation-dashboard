@@ -436,7 +436,10 @@ def status_snapshot(data: SimData, month: str, prev: str, segs_by_case: dict,
     played_set = set(played_months(data) if played is None else played)
 
     def contribution(city: str, dp: str, m: str) -> float:
-        return float(data.net("total", city, f"{dp} Contribution")[m]) if m in played_set else 0.0
+        # Segment contribution is real data in every month, so it is not gated on `played_set`
+        # (only the city / Florida profit-loss, read from accumulated profit, waits for play).
+        v = data.net("total", city, f"{dp} Contribution")[m]
+        return 0.0 if pd.isna(v) else float(v)
 
     def num(v) -> float | None:
         return None if pd.isna(v) else float(v)

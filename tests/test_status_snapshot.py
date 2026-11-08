@@ -69,8 +69,11 @@ def test_elasticity_range_is_ordered_and_capped(status):
 def test_contribution_has_previous_month(status):
     data, st = status
     sg = st.segments[("Orlando", "Weekday")]
-    prev = data.months[-2]
-    assert sg.contribution_prev == 0          # sample months were not played: shown as $0
+    latest, prev = data.months[-1], data.months[-2]
+    contrib = data.net("total", "Orlando", "Weekday Contribution")
+    assert sg.contribution == pytest.approx(contrib[latest]) and sg.contribution > 0
+    assert sg.contribution_prev == pytest.approx(contrib[prev]) and sg.contribution_prev > 0
+    assert sg.contribution != sg.contribution_prev       # real delta, even though no month was "played"
 
 
 def test_price_format_keeps_cents_and_gap_sign():
@@ -105,7 +108,7 @@ def test_everything_reads_zero_before_the_game_is_played(status):
     assert st.florida_profit == 0 and st.florida_delta == 0 and st.florida_cumulative == 0
     assert all(v == 0 for v in st.city_profit.values())
     assert st.since is None
-    assert all(s.contribution == 0 and s.contribution_prev == 0 for s in st.segments.values())
+    assert all(s.contribution > 0 for s in st.segments.values())   # segment cards are not gated
     assert st.segments[("Orlando", "Weekday")].price > 0     # prices still come from the data
 
 
