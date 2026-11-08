@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 
 import pandas as pd
 
-from .config import DAYPART_ALIASES, MONTH_ORDER, NET_INCOME_LINES
+from .config import BASE_MONTHS, DAYPART_ALIASES, MONTH_ORDER, NET_INCOME_LINES
 
 FACT_COLUMNS = ["table", "city", "daypart", "firm", "field", "month", "value"]
 
@@ -47,7 +47,7 @@ def parse_number(raw: str) -> float | None:
 
 def normalize_month(raw: str) -> str:
     m = raw.strip()[:3].title()
-    if m not in MONTH_ORDER:
+    if m not in BASE_MONTHS:
         raise ParseError(f"{raw!r} is not a month name")
     return m
 
@@ -192,6 +192,13 @@ class Parsed:
         return [m for m in MONTH_ORDER if m in set(self.facts["month"])]
 
 
+def _year_label(month: str, seen: dict[str, int]) -> str:
+    """The simulation can run past a year: a month name that comes round again in the same
+    table is the next year's ("Jul" -> "Jul 2")."""
+    seen[month] = seen.get(month, 0) + 1
+    return month if seen[month] == 1 else f"{month} {seen[month]}"
+
+
 def parse_text(text: str, city: str | None = None, basis: str | None = None,
                defer_city: bool = False) -> Parsed:
     """Parse one pasted table. ``city`` is required for net-income screens, unless
@@ -206,10 +213,11 @@ def parse_text(text: str, city: str | None = None, basis: str | None = None,
     stacked = [_ffill(r) for r in grid[:hdr]]
     field_row = [c.strip() for c in grid[hdr]]
     rows: list[dict] = []
+    seen_months: dict[str, int] = {}
     for data_row in grid[hdr + 1:]:
         if not data_row[0].strip():
             continue
-        month = normalize_month(data_row[0])
+        month = _year_label(normalize_month(data_row[0]), seen_months)
         for j in range(1, len(field_row)):
             if not field_row[j]:
                 continue
@@ -232,7 +240,8 @@ def _parse_net_income(grid: list[list[str]], city: str | None, basis: str | None
                          "Choose Orlando or Miami.")
     city = city or ""
     basis = basis or detect_net_income_basis(grid)
-    months = [normalize_month(c) for c in grid[0][1:] if c.strip()]
+    seen_months: dict[str, int] = {}
+    months = [_year_label(normalize_month(c), seen_months) for c in grid[0][1:] if c.strip()]
     rows: list[dict] = []
     seen: list[str] = []
     for row in grid[1:]:

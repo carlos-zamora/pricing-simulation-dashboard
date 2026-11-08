@@ -54,7 +54,7 @@ def test_miami_weekday_capacity_flag(status):
 def test_next_month_wraps_in_simulation_order():
     from pricing.config import next_month
     assert next_month("Oct") == "Nov"
-    assert next_month("Jun") == "Jul"
+    assert next_month("Jun") == "Jul 2"  # the simulation can run past 12 months
 
 
 def test_elasticity_range_is_ordered_and_capped(status):

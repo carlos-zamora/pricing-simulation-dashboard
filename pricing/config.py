@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 # Order in which simulation months occur. The simulation starts in July.
-MONTH_ORDER = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+BASE_MONTHS = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
                "Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+# The simulation can run past 12 months: the second July is "Jul 2", the third "Jul 3", etc.
+MONTH_ORDER = BASE_MONTHS + [f"{m} 2" for m in BASE_MONTHS] + [f"{m} 3" for m in BASE_MONTHS]
+
 
 def next_month(month: str) -> str:
-    """The month after `month` in simulation order (Jun wraps to Jul)."""
-    return MONTH_ORDER[(MONTH_ORDER.index(month) + 1) % len(MONTH_ORDER)]
+    """The month after `month` in simulation order (Jun is followed by Jul 2, and so on)."""
+    return MONTH_ORDER[min(MONTH_ORDER.index(month) + 1, len(MONTH_ORDER) - 1)]
 
 
 CITIES = ["Orlando", "Miami"]          # cities we analyse (Florida = both combined)

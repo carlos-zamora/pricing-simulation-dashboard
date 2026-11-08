@@ -58,8 +58,11 @@ def merge_facts(old: pd.DataFrame, new: pd.DataFrame) -> tuple[pd.DataFrame, lis
     """Merge ``new`` into ``old``; new values win. Also report changed history."""
     if old.empty:
         return new.copy(), []
+    # A paste can repeat a number (same key twice); the last one wins, so the index stays unique.
     o = old.set_index(KEY)["value"]
     n = new.set_index(KEY)["value"]
+    o = o[~o.index.duplicated(keep="last")]
+    n = n[~n.index.duplicated(keep="last")]
     both = o.index.intersection(n.index)
     diff = (o.loc[both] - n.loc[both]).abs() > 1e-6
     changed = []

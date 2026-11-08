@@ -87,3 +87,24 @@ def test_merge_is_idempotent():
     a = parse_text((SAMPLES / "price_history.txt").read_text()).facts
     merged, changed = merge_facts(a, a)
     assert changed == [] and len(merged) == len(a)
+
+
+def test_merge_facts_tolerates_duplicate_keys():
+    import pandas as pd
+    from pricing.store import merge_facts
+    row = dict(table="price", city="Orlando", daypart="Weekday", firm="Univ", field="Price", month="Jul")
+    old = pd.DataFrame([{**row, "value": 40.0}])
+    new = pd.DataFrame([{**row, "value": 41.0}, {**row, "value": 42.0}])
+    merged, changed = merge_facts(old, new)
+    assert len(merged) == 1 and merged["value"].iloc[0] == 42.0
+    assert len(changed) == 1
+
+
+def test_repeated_month_is_next_year_not_overwrite():
+    from pathlib import Path
+    from pricing.parsers import parse_text
+    text = (Path(__file__).parent.parent / "sample_data" / "price_history.txt").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    jul = next(l for l in lines if l.startswith("Jul"))
+    parsed = parse_text("\r\n".join(lines + [jul]))
+    assert parsed.months[0] == "Jul" and parsed.months[-1] == "Jul 2"
